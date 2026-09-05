@@ -1,0 +1,14 @@
+{
+  "name": "oogiri-card-game",
+  "version": "1.0.0",
+  "description": "Gemini API自動採点付きリアルタイム大喜利カードゲーム",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}

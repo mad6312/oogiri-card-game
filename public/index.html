@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大喜利カードゲーム（AI審査版）</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+
+<body>
+    <div id="app">
+        <!-- ヘッダー（共通UI・設定ボタン） -->
+        <header class="app-header">
+            <div class="logo">大喜利カードバトル</div>
+            <div class="header-right">
+                <button id="btn-open-settings" class="btn-secondary">⚙️ 名前変更</button>
+            </div>
+        </header>
+
+        <!-- 1. ロビー画面 -->
+        <section id="lobby-screen" class="screen active">
+            <div class="lobby-card">
+                <h1>ロビー待機中</h1>
+                <p class="lobby-desc">回答カードを駆使してAIを唸らせろ！ 一本（★）を3つ先取した人の勝利！</p>
+
+                <div class="lobby-stats">
+                    <div class="stat-box">
+                        <span class="stat-label">現在の参加人数</span>
+                        <span id="lobby-entered-count" class="stat-value">0 / 10名</span>
+                    </div>
+                    <div id="lobby-status-badge" class="badge badge-gray">未エントリー</div>
+                </div>
+
+                <div class="lobby-actions">
+                    <button id="btn-toggle-entry" class="btn-primary">参加する</button>
+                    <button id="btn-start-game" class="btn-start" style="display: none;">ゲーム開始（ホストのみ）</button>
+                </div>
+
+                <div class="lobby-players-list">
+                    <h3>参加者一覧</h3>
+                    <ul id="lobby-user-list"></ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. 対戦メイン画面（盤面レイアウト） -->
+        <section id="game-screen" class="screen">
+            <!-- 画面上部〜左右：対戦相手エリア（可変レイアウト） -->
+            <div id="opponents-container" class="opponents-container">
+                <!-- JSで対戦相手の数（1〜9名）に応じて動的生成 -->
+            </div>
+
+            <!-- 画面中央：お題カード -->
+            <div class="table-center">
+                <div class="topic-card">
+                    <span class="topic-tag">本日のお題</span>
+                    <div id="current-topic-text" class="topic-body">お題を読み込み中...</div>
+                </div>
+                <div id="scoring-indicator" class="scoring-indicator" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>AI（Gemini 3.6 Flash）が厳正に審査中...</p>
+                </div>
+            </div>
+
+            <!-- 新設：自陣とお題エリアの間の中央提出カード配置スペース -->
+            <div id="submitted-card-area" class="submitted-card-area" style="display: none;">
+                <span class="submitted-card-label">あなたの提出した回答カード</span>
+                <div id="submitted-card-box" class="submitted-card-box">
+                    <!-- 提出されたカードの内容がここに表示されます -->
+                </div>
+            </div>
+
+            <!-- 画面手前：自陣エリア（プレイヤー情報・勝ち星 ＋ 回答するボタン ＋ 済ランプ ＋ 手札） -->
+            <div class="self-container">
+                <div class="self-status-bar">
+                    <div class="player-info-badge">
+                        <span id="self-name" class="name">あなた</span>
+                        <span id="self-stars" class="stars">☆☆☆</span>
+                    </div>
+
+                    <!-- 勝ち星と済ランプの中央：回答するボタン -->
+                    <div class="submit-action-center">
+                        <button id="btn-submit-answer" class="btn-submit-answer" disabled>回答する</button>
+                    </div>
+
+                    <div class="done-lamp-wrapper">
+                        <span class="lamp-label">選択状態:</span>
+                        <div id="self-done-lamp" class="done-lamp">済</div>
+                    </div>
+                </div>
+
+                <!-- 手札リスト -->
+                <div id="hand-cards-container" class="hand-cards-container">
+                    <!-- 手札カードがJSで生成される -->
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. ラウンドリザルト画面（3カラムGrid ＋ 10人スクロール対応） -->
+        <section id="result-screen" class="screen">
+            <div class="result-modal-box">
+                <div class="result-header">
+                    <h2>ラウンド結果発表</h2>
+                    <p id="result-topic-summary" class="result-topic"></p>
+                </div>
+
+                <!-- 全員の準備状態（済ランプ常時確認用） -->
+                <div class="result-ready-status">
+                    <span class="status-title">次のラウンドへの準備状況:</span>
+                    <div id="result-lamps-list" class="result-lamps-list"></div>
+                </div>
+
+                <!-- 3カラムGrid採点結果リスト（縦スクロール対応） -->
+                <div class="result-table-container">
+                    <div class="result-grid-header">
+                        <div>順位 / プレイヤー</div>
+                        <div>AI採点</div>
+                        <div>回答カード</div>
+                    </div>
+                    <div id="result-grid-body" class="result-grid-body">
+                        <!-- JSで動的生成 -->
+                    </div>
+                </div>
+
+                <div class="result-actions">
+                    <button id="btn-next-round" class="btn-primary">次へ（準備完了）</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 4. 最終対戦結果画面（優勝者スポットライト演出） -->
+        <section id="gameover-screen" class="screen">
+            <div class="gameover-box">
+                <div class="spotlight"></div>
+                <div class="winner-celebration">
+                    <div class="crown">👑</div>
+                    <h1 id="winner-name">プレイヤー名</h1>
+                    <p class="winner-tag">大喜利チャンピオン決定！</p>
+                </div>
+
+                <div class="final-rankings-container">
+                    <h3>最終順位一覧</h3>
+                    <ul id="final-rankings-list" class="final-rankings-list"></ul>
+                </div>
+
+                <div class="gameover-actions">
+                    <button id="btn-rematch" class="btn-primary">再戦（エントリー維持）</button>
+                    <button id="btn-leave" class="btn-secondary">退出する</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- モーダル：設定（名前変更） -->
+        <div id="modal-settings" class="modal">
+            <div class="modal-content">
+                <h3>プレイヤー名設定</h3>
+                <input type="text" id="input-player-name" maxlength="12" placeholder="名前を入力（12文字以内）">
+                <div class="modal-actions">
+                    <button id="btn-save-name" class="btn-primary">保存</button>
+                    <button id="btn-close-settings" class="btn-secondary">閉じる</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- モーダル：AI解説詳細ポップアップ -->
+        <div id="modal-explanation" class="modal">
+            <div class="modal-content">
+                <h3 id="modal-card-title">回答カード</h3>
+                <div class="card-quote" id="modal-card-quote"></div>
+                <h4>AI審査員の講評</h4>
+                <p id="modal-card-comment" class="comment-text"></p>
+                <div class="modal-actions">
+                    <button id="btn-close-explanation" class="btn-primary">閉じる</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="client.js"></script>
+</body>
+
+</html>

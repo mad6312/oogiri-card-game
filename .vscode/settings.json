@@ -1,0 +1,11 @@
+{
+    "files.exclude": {
+        ".vscode/": true,
+        "backup/": true,
+        "jpg_files/": true,
+        "node_modules/": true,
+        "*.json": true,
+        "public/images/": true,
+        "個人用メモ**": true
+    }
+}
