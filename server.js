@@ -9,9 +9,7 @@ const { Server } = require('socket.io');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const path = require('path');
 
-// ==========================================
 // カードマスターデータの外部モジュール読み込み
-// ==========================================
 const { MASTER_TOPICS, MASTER_ANSWERS } = require('./data/cards');
 
 const app = express();
@@ -38,7 +36,7 @@ const gameState = {
     answerDeck: [],
     roundResults: [],
     winner: null,
-    finalRankings: [] // 最終対戦結果の確定ランキング
+    finalRankings: []
 };
 
 function shuffle(array) {
@@ -113,7 +111,7 @@ function broadcastState() {
 }
 
 // ==========================================
-// Gemini APIによる採点ロジック
+// Gemini APIによる採点ロジック（連番インデックスマッチング方式）
 // ==========================================
 async function evaluateAnswersWithGemini(topic, submissions) {
     if (!GEMINI_API_KEY) {
@@ -130,27 +128,28 @@ async function evaluateAnswersWithGemini(topic, submissions) {
     const uniqueModels = [...new Set(candidateModels)];
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
+    // AIにとって最もブレないシンプルな連番（index: 1, 2, 3...）形式でプロンプトを構築
     const prompt = `
 あなたは毒舌とユーモアを兼ね備えたプロの大喜利大会のメイン審査員です。
 以下のお題とプレイヤーたちの回答を審査し、100点満点で厳格に採点してください。
 
 【厳格な採点・出力ルール】
-1. 得点は必ず1〜100点の整数とし、**「絶対に同点を出さないこと」**（各プレイヤーの得点は全て異なるユニークな値にしてください）。
+1. 得点は必ず1〜100点の整数とし、**「絶対に同点を出さないこと」**（各回答の得点は全て異なるユニークな値にしてください）。
 2. お題に対する意外性、ワードセンス、シュールさ、ギャップの切れ味を高く評価してください。
 3. 全員の回答に対して、なぜウケたのか（または滑ったのか）の具体的な採点理由と、愛のあるツッコミや称賛を交えた講評（comment）を記述してください。
 4. **【講評の文字数】必ず日本語で「2〜3文、100〜130文字程度」**にまとめてください。
-5. 返却は必ず有効なJSONフォーマットのみを出力してください。
+5. 返却は必ず有効なJSONフォーマットのみを出力し、各要素に元の回答の「index」番号を正確に含めてください。
 
 お題:「${topic}」
 
 回答一覧:
-${submissions.map(s => `ID:${s.playerId} | 回答者:${s.name} | 回答:「${s.answer}」`).join('\n')}
+${submissions.map((s, idx) => `[番号: ${idx + 1}] 回答者: ${s.name} | 回答:「${s.answer}」`).join('\n')}
 
 期待するJSONフォーマット:
 {
   "evaluations": [
     {
-      "playerId": "ID",
+      "index": 1,
       "score": 95,
       "comment": "講評コメント（100〜130文字程度）"
     }
@@ -173,8 +172,9 @@ ${submissions.map(s => `ID:${s.playerId} | 回答者:${s.name} | 回答:「${s.a
             let evaluations = data.evaluations || [];
             let usedScores = new Set();
 
+            // 重複得点の補正処理
             evaluations.forEach(item => {
-                let score = Math.max(1, Math.min(100, Math.round(item.score)));
+                let score = Math.max(1, Math.min(100, Math.round(Number(item.score) || 50)));
                 while (usedScores.has(score)) {
                     score = Math.max(1, score - 1);
                 }
@@ -184,14 +184,25 @@ ${submissions.map(s => `ID:${s.playerId} | 回答者:${s.name} | 回答:「${s.a
 
             console.log(`モデル [${modelName}] での採点が正常に完了しました！`);
 
-            return submissions.map(s => {
-                const evalItem = evaluations.find(e => e.playerId === s.playerId);
+            // ★改良: 連番インデックス照合 ＆ 並び順フォールバック（絶対に取りこぼさない）
+            return submissions.map((s, idx) => {
+                const expectedIndex = idx + 1;
+                // 1. index番号でマッチング
+                let evalItem = evaluations.find(e => Number(e.index) === expectedIndex);
+                // 2. 万一indexが抜けていた場合は、配列の順番（idx番目）を採用
+                if (!evalItem && evaluations[idx]) {
+                    evalItem = evaluations[idx];
+                }
+
+                const score = evalItem ? evalItem.score : (60 + Math.floor(Math.random() * 35));
+                const comment = (evalItem && evalItem.comment) ? evalItem.comment : "お題に対する独特のアプローチが光るセンスある回答でした！";
+
                 return {
                     playerId: s.playerId,
                     name: s.name,
                     answer: s.answer,
-                    score: evalItem ? evalItem.score : 50,
-                    comment: evalItem ? evalItem.comment : "お題の核心を突く鋭いワードチョイスが光っていました！会場全体の空気を一瞬で自分の色に染め上げた素晴らしい回答で、文句なしの高評価です。"
+                    score: score,
+                    comment: comment
                 };
             }).sort((a, b) => b.score - a.score);
 
@@ -209,6 +220,9 @@ ${submissions.map(s => `ID:${s.playerId} | 回答者:${s.name} | 回答:「${s.a
     return fallbackEvaluation(submissions);
 }
 
+// ==========================================
+// 高品質スマートフォールバック採点
+// ==========================================
 function fallbackEvaluation(submissions) {
     const count = submissions.length;
     const scores = [];
@@ -223,7 +237,10 @@ function fallbackEvaluation(submissions) {
         "お題から想像もつかない斜め上のワードを繰り出す独創性に脱帽です！一瞬のシュールな静寂のあと、じわじわと込み上げてくる中毒性がありました。大喜利らしい切れ味と冒険心を高く評価したい好回答です。",
         "シンプルながらも言葉のチョイスに一切の無駄がなく、脳内に情景が鮮明に浮かび上がりました！直球ストレートで笑いを取りにいく潔いスタイルが審査員の心に深く刺さる、非常にレベルの高い回答です。",
         "常識の枠組みを鮮やかに飛び越えたクレイジーな世界観が最高です！理屈ではなく本能で笑わせに来る圧倒的なパワーを感じました。このカオスな発想力は他の追随を許さない大きな武器になるはずです。",
-        "哀愁とユーモアのブレンドが完璧で、思わずクスッと笑ってしまう絶妙な味付けでした！派手さこそ控えめですが、噛めば噛むほど深みが増していくスルメのような魅力を持った素晴らしいセンスの一撃です。"
+        "哀愁とユーモアのブレンドが完璧で、思わずクスッと笑ってしまう絶妙な味付けでした！派手さこそ控えめですが、噛めば噛むほど深みが増していくスルメのような魅力を持った素晴らしいセンスの一撃です。",
+        "ワード自体のインパクトが強烈で、提示された瞬間に空気を掌握していました！お題との接続部分にも違和感がなく、力技に見えて実は緻密に計算されたスマートさを感じさせます。お見事でした！",
+        "誰もが言いたくても言えなかったタブーに切り込むような切れ味が痛快でした！ブラックユーモアを絶妙なラインで成立させており、審査員席でも思わず唸り声が上がったハイセンスな回答です。",
+        "情景を想像した瞬間にじわじわと笑いがこみ上げてくる破壊力があります！言葉のチョイスが非常にリアルで、まるですぐそこにその光景が見えるかのようでした。センスの塊のような回答です。"
     ];
 
     const shuffledComments = shuffle(commentBank);
@@ -399,7 +416,6 @@ io.on('connection', (socket) => {
                 gameState.phase = 'game_over';
                 gameState.winner = victor;
 
-                // 全参加者の最終獲得星数を確定保存
                 gameState.finalRankings = entered.map(p => ({
                     id: p.id,
                     name: p.name,
