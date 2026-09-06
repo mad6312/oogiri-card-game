@@ -9,87 +9,22 @@ const { Server } = require('socket.io');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const path = require('path');
 
+// ==========================================
+// カードマスターデータの外部モジュール読み込み
+// ==========================================
+const { MASTER_TOPICS, MASTER_ANSWERS } = require('./data/cards');
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+// 最優先モデル: gemini-3.5-flash-lite
 const PREFERRED_GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 
 // 静的ファイルの提供
 app.use(express.static(path.join(__dirname, 'public')));
-
-// ==========================================
-// カードマスターデータ
-// ==========================================
-const MASTER_TOPICS = [
-    "こんな学校の先生は嫌だ。どんな先生？",
-    "100階建てのビル。屋上にある意外すぎる施設とは？",
-    "AIが反乱を起こした理由ランキング第1位は？",
-    "絶対に流行らないコンビニの新しいサービスとは？",
-    "誰も見たことがない新しいヒーローの必殺技は？",
-    "無人島に1つだけ持っていくとしたら絶対に選ばないものは？",
-    "宇宙人が地球に来て最初に発した衝撃の一言とは？",
-    "絶対に売れない新車につけられたキャッチコピーとは？",
-    "ことわざ『犬も歩けば棒に当たる』の現代版を教えてください。",
-    "面接で『特技は？』と聞かれて落された衝撃の回答とは？",
-    "世界一くだらないギネス記録とは？",
-    "タイムマシンを作った博士が最初に行ったくだらない過去とは？"
-];
-
-const MASTER_ANSWERS = [
-    "毎朝の全校朝礼で自分のポエムを朗読する",
-    "消しゴムのカスを練り固めた巨大な球体",
-    "WiFiのパスワードが全角カタカナで40文字",
-    "ボタンを押すと3秒間だけ猫の鳴き声がする",
-    "店員の笑顔が有料オプション（1回50円）",
-    "賞味期限が切れたマヨネーズの怨念",
-    "全自動で肩をトントン叩いてくるが強さが異常",
-    "絶対に誰も乗らないジェットコースター",
-    "初対面の相手にいきなりタメ口で説教を始める",
-    "『それってあなたの感想ですよね？』と囁く",
-    "深夜2時に突然鳴り響くリコーダーの演奏",
-    "宇宙船の燃料がまさかの麦茶",
-    "テストの裏面にだけびっしり書かれた自分史",
-    "全員が一度は踏んだことがある生暖かいレゴブロック",
-    "パスモの残高が常に3円足りない呪い",
-    "授業参観にだけ本気を出してくる担任",
-    "校内放送でこっそり愚痴をこぼす校長",
-    "満員電車でいきなり始まるイントロクイズ",
-    "なぜか靴下だけを盗んでいく謎の怪盗",
-    "語尾に必ず『〜とでも言うと思ったか』がつく",
-    "3日煮込んだ結果ただの炭になったカレー",
-    "どんな質問にも『要検討ですね』と返すロボット",
-    "全自動肩たたき機（ただし全力パンチ）",
-    "絶対に曲がらないスプーンを曲げようとして自爆",
-    "100円ショップで一番いらないと噂の便利グッズ",
-    "世界で一番どうでもいい豆知識を披露する",
-    "雨の日だけ異常に張り切るてるてる坊主",
-    "授業中に突然始まるサイレントダンス",
-    "自動ドアが自分を認識してくれず激突する",
-    "大事なところで必ず噛むアナウンサー",
-    "靴を脱ぐと必ず靴下に親指の穴が空いている",
-    "『全米が泣いた』の全米が実は1人の名前だった",
-    "絶対に起きられない目覚まし時計（添い寝機能付き）",
-    "テスト前日に部屋の大掃除を始めてしまう衝動",
-    "コンビニのおにぎりが綺麗に開けられない呪縛",
-    "体育座りで世界新記録を狙う男",
-    "親戚のおじさんが酔っ払って語る若かりし武勇伝",
-    "誰も頼んでいないのに流れるヒーリング音楽",
-    "100円玉を入れないと動かないブランコ",
-    "宿題を忘れた理由が『宇宙人の侵略』",
-    "シャンプーとリンスを同時に間違える絶望感",
-    "エレベーターでボタンを押し間違えて気まずい空気",
-    "急に静かになった教室で鳴り響く腹の虫",
-    "『明日から本気出す』と言い続けて10年経過",
-    "絶対に勝てないジャンケンマシーン",
-    "唐揚げに勝手にレモンを絞る謎の勢力",
-    "お母さんが買ってきた微妙にダサい英字Tシャツ",
-    "お化け屋敷の幽霊がマスクをして除菌している",
-    "全自動で言い訳を生成してくれるAIアシスタント",
-    "月曜日の朝にだけ押し寄せる強烈な虚無感"
-];
 
 // ==========================================
 // ゲーム状態の管理
@@ -169,7 +104,7 @@ function broadcastState() {
         enteredCount: enteredPlayers.length,
         roundResults: gameState.roundResults,
         winner: gameState.winner,
-        finalRankings: gameState.finalRankings // 確定した最終順位一覧を同期
+        finalRankings: gameState.finalRankings
     });
 
     Object.values(gameState.players).forEach(p => {
@@ -278,7 +213,7 @@ function fallbackEvaluation(submissions) {
     const count = submissions.length;
     const scores = [];
     while (scores.length < count) {
-        const s = Math.floor(Math.random() * 41) + 60;
+        const s = Math.floor(Math.random() * 41) + 60; // 60〜100点
         if (!scores.includes(s)) scores.push(s);
     }
     scores.sort((a, b) => b - a);
@@ -464,14 +399,13 @@ io.on('connection', (socket) => {
                 gameState.phase = 'game_over';
                 gameState.winner = victor;
 
-                // ★修正: 星をリセットする前に、全参加者の最終獲得星数を確定保存！
+                // 全参加者の最終獲得星数を確定保存
                 gameState.finalRankings = entered.map(p => ({
                     id: p.id,
                     name: p.name,
                     stars: p.stars
                 })).sort((a, b) => b.stars - a.stars);
 
-                // 次期ゲームへの準備としてエントリー状態と手札のみ初期化（星情報は finalRankings に保持）
                 Object.values(gameState.players).forEach(p => {
                     p.isEntered = false;
                     p.hand = [];
@@ -538,4 +472,5 @@ io.on('connection', (socket) => {
 
 server.listen(PORT, () => {
     console.log(`大喜利サーバーが起動しました: http://localhost:${PORT}`);
+    console.log(`最優先モデル: ${PREFERRED_GEMINI_MODEL}`);
 });
