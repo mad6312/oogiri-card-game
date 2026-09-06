@@ -6,8 +6,9 @@ const socket = io();
 let currentSocketId = null;
 let currentHand = [];
 let lastState = null;
-let selectedCard = null;      // 手札でタップ選択中のカード
-let mySubmittedCard = null;   // 確定・提出したカード（リザルト移行時に破棄）
+let selectedCard = null;        // 手札でタップ選択中のカード
+let mySubmittedCard = null;     // 確定・提出したカード
+let isViewingGameOver = false;  // 最終結果画面を表示中かどうかのフラグ
 
 // DOM要素参照
 const screens = {
@@ -34,7 +35,7 @@ const selfStars = document.getElementById('self-stars');
 const selfDoneLamp = document.getElementById('self-done-lamp');
 const btnSubmitAnswer = document.getElementById('btn-submit-answer');
 
-// 新設：中央提出カード表示エリア
+// 中央提出カード表示エリア
 const submittedCardArea = document.getElementById('submitted-card-area');
 const submittedCardBox = document.getElementById('submitted-card-box');
 
@@ -102,19 +103,54 @@ socket.on('state_update', (state) => {
     if (state.phase === 'answering' && previousPhase !== 'answering') {
         selectedCard = null;
         mySubmittedCard = null;
+        isViewingGameOver = false;
         if (submittedCardArea) {
             submittedCardArea.style.display = 'none';
             submittedCardBox.textContent = '';
         }
     }
 
-    // 1. ロビー画面
+    // 1. 最終対戦結果画面（確定星数・同順位の描画）
+    if (state.phase === 'game_over') {
+        isViewingGameOver = true;
+        switchScreen('gameover');
+
+        if (state.winner) {
+            winnerName.textContent = state.winner.name;
+        }
+
+        finalRankingsList.innerHTML = '';
+        // サーバー側で確定保存された finalRankings を使用
+        const rankings = state.finalRankings || [];
+
+        let currentRank = 1;
+        rankings.forEach((p, idx) => {
+            // 直前のプレイヤーより星数が少なければ順位を繰り下げ（同星数は同順位）
+            if (idx > 0 && p.stars < rankings[idx - 1].stars) {
+                currentRank = idx + 1;
+            }
+            const li = document.createElement('li');
+            li.innerHTML = `
+        <span>第${currentRank}位: ${escapeHtml(p.name)} ${p.id === currentSocketId ? '(あなた)' : ''}</span>
+        <span class="stars">${renderStars(p.stars)} (${p.stars}本)</span>
+      `;
+            finalRankingsList.appendChild(li);
+        });
+        return;
+    }
+
+    // 自分がまだ最終結果画面を見ている間は、他人の操作によるロビー遷移をブロック
+    if (isViewingGameOver) {
+        return;
+    }
+
+    // 2. ロビー画面の更新
     if (state.phase === 'lobby') {
         switchScreen('lobby');
         lobbyEnteredCount.textContent = `${state.enteredCount} / 10名`;
 
         if (isEntered) {
-            lobbyStatusBadge.textContent = '参加中...';
+            lobbyStatusBadge.textContent = '参加中... 他のプレイヤーを待っています';
             lobbyStatusBadge.className = 'badge badge-green';
             btnToggleEntry.textContent = '参加キャンセル';
             btnToggleEntry.className = 'btn-secondary';
@@ -142,7 +178,7 @@ socket.on('state_update', (state) => {
         });
     }
 
-    // 2. 対戦中（回答選択中・AI審査中）
+    // 3. 対戦中（回答選択中・AI審査中）
     else if (state.phase === 'answering' || state.phase === 'scoring') {
         switchScreen('game');
         currentTopicText.textContent = state.currentTopic || 'お題準備中';
@@ -153,18 +189,15 @@ socket.on('state_update', (state) => {
             selfStars.textContent = renderStars(me.stars);
 
             if (me.hasAnswered) {
-                // 提出完了済み：自陣済ランプ点灯、ボタン非活性
                 selfDoneLamp.classList.add('active');
                 btnSubmitAnswer.disabled = true;
                 btnSubmitAnswer.textContent = '回答済み';
 
-                // 提出カードを中央スペースに表示維持
                 if (mySubmittedCard) {
                     submittedCardArea.style.display = 'flex';
                     submittedCardBox.textContent = mySubmittedCard;
                 }
             } else {
-                // 未提出状態
                 selfDoneLamp.classList.remove('active');
                 btnSubmitAnswer.textContent = '回答する';
                 submittedCardArea.style.display = 'none';
@@ -197,11 +230,10 @@ socket.on('state_update', (state) => {
         renderHandCards();
     }
 
-    // 3. ラウンドリザルト画面（★ここで中央配置カードを消滅・破棄）
+    // 4. ラウンドリザルト画面
     else if (state.phase === 'round_result') {
         switchScreen('result');
 
-        // 要求仕様2：リザルト画面へ遷移したタイミングで中央提出カードを完全消去（破棄）
         mySubmittedCard = null;
         if (submittedCardArea) {
             submittedCardArea.style.display = 'none';
@@ -233,30 +265,6 @@ socket.on('state_update', (state) => {
         }
 
         renderRoundResults(state.roundResults);
-    }
-
-    // 4. 最終結果画面
-    else if (state.phase === 'game_over') {
-        switchScreen('gameover');
-        if (state.winner) {
-            winnerName.textContent = state.winner.name;
-        }
-
-        finalRankingsList.innerHTML = '';
-        const sorted = [...state.players.filter(p => p.isEntered)].sort((a, b) => b.stars - a.stars);
-
-        let currentRank = 1;
-        sorted.forEach((p, idx) => {
-            if (idx > 0 && p.stars < sorted[idx - 1].stars) {
-                currentRank = idx + 1;
-            }
-            const li = document.createElement('li');
-            li.innerHTML = `
-        <span>第${currentRank}位: ${escapeHtml(p.name)} ${p.id === currentSocketId ? '(あなた)' : ''}</span>
-        <span class="stars">${renderStars(p.stars)} (${p.stars}本)</span>
-      `;
-            finalRankingsList.appendChild(li);
-        });
     }
 });
 
@@ -294,22 +302,19 @@ function renderHandCards() {
     });
 }
 
-// 回答するボタン押下（中央スペースへの移動表示 ＆ 送信）
+// 回答するボタン押下
 btnSubmitAnswer.addEventListener('click', () => {
     if (!selectedCard) return;
 
     const me = lastState ? lastState.players.find(p => p.id === currentSocketId) : null;
     if (!me || me.hasAnswered || lastState.phase !== 'answering') return;
 
-    // 提出カードを退避して中央表示枠へ配置
     mySubmittedCard = selectedCard;
     submittedCardArea.style.display = 'flex';
     submittedCardBox.textContent = mySubmittedCard;
 
-    // サーバーへ送信
     socket.emit('submit_answer', selectedCard);
 
-    // 選択中カードをクリアし、ボタン・ランプを更新
     selectedCard = null;
     btnSubmitAnswer.disabled = true;
     btnSubmitAnswer.textContent = '回答済み';
@@ -394,12 +399,18 @@ btnNextRound.addEventListener('click', () => {
     socket.emit('ready_next_round');
 });
 
+// 再戦ボタン：押した本人のみ再戦を決定してロビーへ遷移
 btnRematch.addEventListener('click', () => {
+    isViewingGameOver = false;
     socket.emit('rematch');
+    switchScreen('lobby');
 });
 
+// 退出するボタン：押した本人のみ退出を決定してロビーへ遷移
 btnLeave.addEventListener('click', () => {
+    isViewingGameOver = false;
     socket.emit('leave_game');
+    switchScreen('lobby');
 });
 
 btnOpenSettings.addEventListener('click', () => {

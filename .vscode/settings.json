@@ -5,6 +5,7 @@
         "jpg_files/": true,
         "node_modules/": true,
         "*.json": true,
+        "*.env": true,
         "public/images/": true,
         "個人用メモ**": true
     }

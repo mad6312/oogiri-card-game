@@ -332,9 +332,7 @@ button {
     }
 }
 
-/* ==========================================
-   新設：自陣とお題の間の提出カード配置エリア
-   ========================================== */
+/* 自陣とお題の間の提出カード配置エリア */
 .submitted-card-area {
     display: flex;
     flex-direction: column;
@@ -646,16 +644,19 @@ button {
     background: #2c344a;
 }
 
+/* 1位専用講評バナー（100〜130文字に合わせて行間・余白を最適化） */
 .top-comment-banner {
     grid-column: 1 / -1;
-    background: #2a2012;
+    background: linear-gradient(135deg, #2b1f10, #1f1811);
     border-left: 4px solid #ff9800;
-    padding: 10px 14px;
-    margin: 4px 14px 10px;
-    border-radius: 4px;
-    font-size: 0.85rem;
+    padding: 12px 16px;
+    margin: 6px 14px 12px;
+    border-radius: 6px;
+    font-size: 0.88rem;
     color: #ffcc80;
-    line-height: 1.4;
+    line-height: 1.6;
+    letter-spacing: 0.3px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
 .star-pop {
@@ -773,7 +774,7 @@ button {
 }
 
 /* ==========================================
-   モーダル共通
+   モーダル共通（長文講評に合わせて読みやすさを向上）
    ========================================== */
 .modal {
     display: none;
@@ -793,15 +794,22 @@ button {
 .modal-content {
     background: #1c2030;
     border: 1px solid #3b4259;
-    border-radius: 10px;
-    padding: 24px;
+    border-radius: 12px;
+    padding: 26px;
     width: 90%;
-    max-width: 440px;
+    max-width: 500px;
+    box-shadow: 0 12px 35px rgba(0, 0, 0, 0.6);
 }
 
 .modal-content h3 {
-    margin-bottom: 16px;
+    margin-bottom: 14px;
     font-size: 1.15rem;
+}
+
+.modal-content h4 {
+    font-size: 0.95rem;
+    color: #ff9800;
+    margin-bottom: 8px;
 }
 
 .modal-content input[type="text"] {
@@ -817,18 +825,25 @@ button {
 
 .card-quote {
     background: #252b3d;
-    padding: 12px;
+    padding: 12px 16px;
     border-radius: 6px;
     border-left: 4px solid #ff9800;
     font-size: 0.95rem;
-    margin-bottom: 14px;
+    margin-bottom: 16px;
+    font-weight: 600;
 }
 
+/* 長文講評（100〜130文字）のテキストスタイル */
 .comment-text {
-    font-size: 0.9rem;
-    line-height: 1.5;
-    color: #cfd6e6;
-    margin-bottom: 20px;
+    font-size: 0.93rem;
+    line-height: 1.65;
+    color: #e0e6f5;
+    margin-bottom: 22px;
+    background: #151824;
+    padding: 14px 16px;
+    border-radius: 8px;
+    border: 1px solid #282f45;
+    letter-spacing: 0.3px;
 }
 
 .modal-actions {

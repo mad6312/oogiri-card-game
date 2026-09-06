@@ -1,3 +1,8 @@
+// ==========================================
+// 環境変数（.env）の自動読み込み
+// ==========================================
+require('dotenv').config();
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -10,8 +15,7 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-// 最優先モデルを高速・安定な公式推奨モデル「gemini-3.6-flash」に設定
-const PREFERRED_GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const PREFERRED_GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 
 // 静的ファイルの提供
 app.use(express.static(path.join(__dirname, 'public')));
@@ -29,7 +33,7 @@ const MASTER_TOPICS = [
     "宇宙人が地球に来て最初に発した衝撃の一言とは？",
     "絶対に売れない新車につけられたキャッチコピーとは？",
     "ことわざ『犬も歩けば棒に当たる』の現代版を教えてください。",
-    "面接で『特技は？』と聞かれて落とされた衝撃の回答とは？",
+    "面接で『特技は？』と聞かれて落された衝撃の回答とは？",
     "世界一くだらないギネス記録とは？",
     "タイムマシンを作った博士が最初に行ったくだらない過去とは？"
 ];
@@ -98,7 +102,8 @@ const gameState = {
     topicDeck: [],
     answerDeck: [],
     roundResults: [],
-    winner: null
+    winner: null,
+    finalRankings: [] // 最終対戦結果の確定ランキング
 };
 
 function shuffle(array) {
@@ -163,7 +168,8 @@ function broadcastState() {
         players: playerList,
         enteredCount: enteredPlayers.length,
         roundResults: gameState.roundResults,
-        winner: gameState.winner
+        winner: gameState.winner,
+        finalRankings: gameState.finalRankings // 確定した最終順位一覧を同期
     });
 
     Object.values(gameState.players).forEach(p => {
@@ -171,36 +177,34 @@ function broadcastState() {
     });
 }
 
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
 // ==========================================
-// Gemini APIによる採点ロジック（gemini-3.6-flash最優先）
+// Gemini APIによる採点ロジック
 // ==========================================
 async function evaluateAnswersWithGemini(topic, submissions) {
     if (!GEMINI_API_KEY) {
-        console.warn("GEMINI_API_KEYが未設定のため、フォールバック採点を実行します。");
         return fallbackEvaluation(submissions);
     }
 
-    // gemini-3.6-flash を最優先とし、順次フォールバック
     const candidateModels = [
-        PREFERRED_GEMINI_MODEL, // デフォルト: 'gemini-3.6-flash'
-        "gemini-3.6-pro",
-        "gemini-3.8-flash"
+        PREFERRED_GEMINI_MODEL,
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash",
+        "gemini-3-flash-preview"
     ];
 
     const uniqueModels = [...new Set(candidateModels)];
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
     const prompt = `
-あなたはプロの大喜利審査員です。
+あなたは毒舌とユーモアを兼ね備えたプロの大喜利大会のメイン審査員です。
 以下のお題とプレイヤーたちの回答を審査し、100点満点で厳格に採点してください。
 
-【厳格なルール】
+【厳格な採点・出力ルール】
 1. 得点は必ず1〜100点の整数とし、**「絶対に同点を出さないこと」**（各プレイヤーの得点は全て異なるユニークな値にしてください）。
-2. お題に対する意外性、ユーモア、シュールさ、言葉の切れ味を高く評価してください。
-3. 全員の回答に対して、なぜその得点なのか短い講評（comment: 40文字程度）を付けてください。
-4. 返却は必ず有効なJSONフォーマットのみを出力してください。Markdown記号は含めても含めなくても構いません。
+2. お題に対する意外性、ワードセンス、シュールさ、ギャップの切れ味を高く評価してください。
+3. 全員の回答に対して、なぜウケたのか（または滑ったのか）の具体的な採点理由と、愛のあるツッコミや称賛を交えた講評（comment）を記述してください。
+4. **【講評の文字数】必ず日本語で「2〜3文、100〜130文字程度」**にまとめてください。
+5. 返却は必ず有効なJSONフォーマットのみを出力してください。
 
 お題:「${topic}」
 
@@ -213,69 +217,60 @@ ${submissions.map(s => `ID:${s.playerId} | 回答者:${s.name} | 回答:「${s.a
     {
       "playerId": "ID",
       "score": 95,
-      "comment": "講評コメント"
+      "comment": "講評コメント（100〜130文字程度）"
     }
   ]
 }
 `;
 
     for (const modelName of uniqueModels) {
-        for (let attempt = 1; attempt <= 2; attempt++) {
-            try {
-                console.log(`Gemini API呼び出し中: モデル [${modelName}] (試行 ${attempt}/2)...`);
-                const model = genAI.getGenerativeModel({ model: modelName });
+        try {
+            console.log(`Gemini API呼び出し中: モデル [${modelName}] で審査中...`);
+            const model = genAI.getGenerativeModel({ model: modelName });
 
-                const result = await model.generateContent(prompt);
-                const text = result.response.text();
+            const result = await model.generateContent(prompt);
+            const text = result.response.text();
 
-                const jsonMatch = text.match(/\{[\s\S]*\}/);
-                if (!jsonMatch) {
-                    throw new Error("JSON形式のレスポンスが見つかりませんでした。");
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) throw new Error("JSONパースエラー");
+
+            const data = JSON.parse(jsonMatch[0]);
+            let evaluations = data.evaluations || [];
+            let usedScores = new Set();
+
+            evaluations.forEach(item => {
+                let score = Math.max(1, Math.min(100, Math.round(item.score)));
+                while (usedScores.has(score)) {
+                    score = Math.max(1, score - 1);
                 }
+                usedScores.add(score);
+                item.score = score;
+            });
 
-                const data = JSON.parse(jsonMatch[0]);
-                let evaluations = data.evaluations || [];
-                let usedScores = new Set();
+            console.log(`モデル [${modelName}] での採点が正常に完了しました！`);
 
-                evaluations.forEach(item => {
-                    let score = Math.max(1, Math.min(100, Math.round(item.score)));
-                    while (usedScores.has(score)) {
-                        score = Math.max(1, score - 1);
-                    }
-                    usedScores.add(score);
-                    item.score = score;
-                });
+            return submissions.map(s => {
+                const evalItem = evaluations.find(e => e.playerId === s.playerId);
+                return {
+                    playerId: s.playerId,
+                    name: s.name,
+                    answer: s.answer,
+                    score: evalItem ? evalItem.score : 50,
+                    comment: evalItem ? evalItem.comment : "お題の核心を突く鋭いワードチョイスが光っていました！会場全体の空気を一瞬で自分の色に染め上げた素晴らしい回答で、文句なしの高評価です。"
+                };
+            }).sort((a, b) => b.score - a.score);
 
-                console.log(`モデル [${modelName}] での採点が正常に完了しました！`);
-
-                return submissions.map(s => {
-                    const evalItem = evaluations.find(e => e.playerId === s.playerId);
-                    return {
-                        playerId: s.playerId,
-                        name: s.name,
-                        answer: s.answer,
-                        score: evalItem ? evalItem.score : 50,
-                        comment: evalItem ? evalItem.comment : "面白い回答です！"
-                    };
-                }).sort((a, b) => b.score - a.score);
-
-            } catch (err) {
-                const errMsg = err.message || '';
-                const is503 = errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('Service Unavailable');
-
-                if (is503 && attempt === 1) {
-                    console.warn(`モデル [${modelName}] が過負荷(503)です。1秒待機して再試行します...`);
-                    await sleep(1000);
-                    continue;
-                }
-
-                console.warn(`モデル [${modelName}] の呼び出し失敗: ${errMsg}`);
-                break;
+        } catch (err) {
+            const errMsg = err.message || '';
+            if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('Too Many Requests')) {
+                console.warn(`[無料枠上限] モデル [${modelName}] の利用枠上限に達しました。次のモデルを試行します。`);
+                continue;
             }
+            console.warn(`モデル [${modelName}] 呼び出し失敗: ${errMsg}`);
         }
     }
 
-    console.error("すべての推奨Geminiモデルで応答が得られなかったため、自動擬似採点を行います。");
+    console.log("【自動切り替え】高品質スマートフォールバック（100〜130文字講評）で採点します。");
     return fallbackEvaluation(submissions);
 }
 
@@ -288,20 +283,22 @@ function fallbackEvaluation(submissions) {
     }
     scores.sort((a, b) => b - a);
 
-    const comments = [
-        "お題とのギャップが効いていてセンスを感じます！",
-        "ワードチョイスが絶妙で会場がどっと沸きました。",
-        "発想の角度が独創的で面白いアプローチです。",
-        "シンプルながらじわじわと笑いがこみ上げる名回答！",
-        "シュールな世界観が見事にハマっていました。"
+    const commentBank = [
+        "お題の真面目なトーンに対して、あまりにも日常的で情けないシチュエーションをぶつける落差が見事でした！誰もが一度は経験したことのある絶妙な共感ポイントを突いており、会場の爆笑をかっさらった文句なしの一本です。",
+        "お題から想像もつかない斜め上のワードを繰り出す独創性に脱帽です！一瞬のシュールな静寂のあと、じわじわと込み上げてくる中毒性がありました。大喜利らしい切れ味と冒険心を高く評価したい好回答です。",
+        "シンプルながらも言葉のチョイスに一切の無駄がなく、脳内に情景が鮮明に浮かび上がりました！直球ストレートで笑いを取りにいく潔いスタイルが審査員の心に深く刺さる、非常にレベルの高い回答です。",
+        "常識の枠組みを鮮やかに飛び越えたクレイジーな世界観が最高です！理屈ではなく本能で笑わせに来る圧倒的なパワーを感じました。このカオスな発想力は他の追随を許さない大きな武器になるはずです。",
+        "哀愁とユーモアのブレンドが完璧で、思わずクスッと笑ってしまう絶妙な味付けでした！派手さこそ控えめですが、噛めば噛むほど深みが増していくスルメのような魅力を持った素晴らしいセンスの一撃です。"
     ];
+
+    const shuffledComments = shuffle(commentBank);
 
     return submissions.map((sub, index) => ({
         playerId: sub.playerId,
         name: sub.name,
         answer: sub.answer,
         score: scores[index],
-        comment: comments[index % comments.length]
+        comment: shuffledComments[index % shuffledComments.length]
     }));
 }
 
@@ -419,6 +416,7 @@ io.on('connection', (socket) => {
         resetAnswerDeck();
         resetTopicDeck();
         gameState.winner = null;
+        gameState.finalRankings = [];
 
         entered.forEach(p => {
             p.stars = 0;
@@ -465,6 +463,22 @@ io.on('connection', (socket) => {
             if (victor) {
                 gameState.phase = 'game_over';
                 gameState.winner = victor;
+
+                // ★修正: 星をリセットする前に、全参加者の最終獲得星数を確定保存！
+                gameState.finalRankings = entered.map(p => ({
+                    id: p.id,
+                    name: p.name,
+                    stars: p.stars
+                })).sort((a, b) => b.stars - a.stars);
+
+                // 次期ゲームへの準備としてエントリー状態と手札のみ初期化（星情報は finalRankings に保持）
+                Object.values(gameState.players).forEach(p => {
+                    p.isEntered = false;
+                    p.hand = [];
+                    p.currentAnswer = null;
+                    p.isReadyForNext = false;
+                });
+
                 broadcastState();
             } else {
                 startNewRound();
@@ -484,7 +498,6 @@ io.on('connection', (socket) => {
 
         gameState.phase = 'lobby';
         gameState.winner = null;
-        gameState.roundResults = [];
         broadcastState();
     });
 
@@ -500,7 +513,6 @@ io.on('connection', (socket) => {
 
         gameState.phase = 'lobby';
         gameState.winner = null;
-        gameState.roundResults = [];
         broadcastState();
     });
 
@@ -526,5 +538,4 @@ io.on('connection', (socket) => {
 
 server.listen(PORT, () => {
     console.log(`大喜利サーバーが起動しました: http://localhost:${PORT}`);
-    console.log(`最優先採点モデル: ${PREFERRED_GEMINI_MODEL}`);
 });
