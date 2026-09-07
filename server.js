@@ -39,6 +39,7 @@ const gameState = {
     finalRankings: []
 };
 
+// 配列シャッフル関数
 function shuffle(array) {
     const arr = [...array];
     for (let i = arr.length - 1; i > 0; i--) {
@@ -111,12 +112,27 @@ function broadcastState() {
 }
 
 // ==========================================
-// Gemini APIによる採点ロジック（連番インデックスマッチング方式）
+// Gemini APIによる完全ブラインド・公平採点ロジック
 // ==========================================
 async function evaluateAnswersWithGemini(topic, submissions) {
     if (!GEMINI_API_KEY) {
         return fallbackEvaluation(submissions);
     }
+
+    // ★公平性対策1: 回答の提出順序を完全にランダムシャッフルして順序バイアスを排除
+    const shuffledSubmissions = shuffle(submissions.map((s, originalIdx) => ({
+        ...s,
+        originalIdx
+    })));
+
+    // ★公平性対策2: プレイヤー名・IDを一切排除した「記号（候補A, B, C...）」でブラインド化
+    const labelChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const blindList = shuffledSubmissions.map((item, idx) => ({
+        label: labelChars[idx] || `${idx + 1}`,
+        answer: item.answer,
+        playerId: item.playerId,
+        name: item.name
+    }));
 
     const candidateModels = [
         PREFERRED_GEMINI_MODEL,
@@ -128,28 +144,28 @@ async function evaluateAnswersWithGemini(topic, submissions) {
     const uniqueModels = [...new Set(candidateModels)];
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-    // AIにとって最もブレないシンプルな連番（index: 1, 2, 3...）形式でプロンプトを構築
     const prompt = `
 あなたは毒舌とユーモアを兼ね備えたプロの大喜利大会のメイン審査員です。
-以下のお題とプレイヤーたちの回答を審査し、100点満点で厳格に採点してください。
+プレイヤーの先入観を完全に排除した「ブラインド審査」を行います。
+以下のお題に対する各回答（候補A〜）を純粋な言葉の切れ味・面白さだけで比較審査し、100点満点で厳格に採点してください。
 
 【厳格な採点・出力ルール】
 1. 得点は必ず1〜100点の整数とし、**「絶対に同点を出さないこと」**（各回答の得点は全て異なるユニークな値にしてください）。
-2. お題に対する意外性、ワードセンス、シュールさ、ギャップの切れ味を高く評価してください。
+2. お題に対する意外性、ワードセンス、シュールさ、ギャップの切れ味を客観的・公正に評価してください。提示された順番に惑わされず、最も面白い回答に最高得点を与えてください。
 3. 全員の回答に対して、なぜウケたのか（または滑ったのか）の具体的な採点理由と、愛のあるツッコミや称賛を交えた講評（comment）を記述してください。
 4. **【講評の文字数】必ず日本語で「2〜3文、100〜130文字程度」**にまとめてください。
-5. 返却は必ず有効なJSONフォーマットのみを出力し、各要素に元の回答の「index」番号を正確に含めてください。
+5. 返却は必ず有効なJSONフォーマットのみを出力し、各要素に「candidate」（例: "A", "B"...）を正確に含めてください。
 
 お題:「${topic}」
 
-回答一覧:
-${submissions.map((s, idx) => `[番号: ${idx + 1}] 回答者: ${s.name} | 回答:「${s.answer}」`).join('\n')}
+匿名回答一覧:
+${blindList.map(b => `[候補 ${b.label}] 回答:「${b.answer}」`).join('\n')}
 
 期待するJSONフォーマット:
 {
   "evaluations": [
     {
-      "index": 1,
+      "candidate": "A",
       "score": 95,
       "comment": "講評コメント（100〜130文字程度）"
     }
@@ -159,48 +175,73 @@ ${submissions.map((s, idx) => `[番号: ${idx + 1}] 回答者: ${s.name} | 回�
 
     for (const modelName of uniqueModels) {
         try {
-            console.log(`Gemini API呼び出し中: モデル [${modelName}] で審査中...`);
-            const model = genAI.getGenerativeModel({ model: modelName });
+            console.log(`Gemini API呼び出し中: モデル [${modelName}] でブラインド審査中...`);
+            const model = genAI.getGenerativeModel({
+                model: modelName,
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    temperature: 0.75 // 決定論的バイアスを崩し、多様で公正な審査を促進
+                }
+            });
 
             const result = await model.generateContent(prompt);
             const text = result.response.text();
 
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            const jsonMatch = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
             if (!jsonMatch) throw new Error("JSONパースエラー");
 
-            const data = JSON.parse(jsonMatch[0]);
-            let evaluations = data.evaluations || [];
-            let usedScores = new Set();
+            const parsed = JSON.parse(jsonMatch[0]);
 
-            // 重複得点の補正処理
-            evaluations.forEach(item => {
-                let score = Math.max(1, Math.min(100, Math.round(Number(item.score) || 50)));
-                while (usedScores.has(score)) {
-                    score = Math.max(1, score - 1);
-                }
-                usedScores.add(score);
-                item.score = score;
+            let rawList = [];
+            if (Array.isArray(parsed)) {
+                rawList = parsed;
+            } else if (parsed && typeof parsed === 'object') {
+                rawList = parsed.evaluations || parsed.results || parsed.scores || parsed.data || Object.values(parsed).find(v => Array.isArray(v)) || [];
+            }
+
+            if (!Array.isArray(rawList) || rawList.length === 0) {
+                throw new Error("評価リストが抽出できませんでした");
+            }
+
+            // 評価結果を正規化
+            let evaluations = rawList.map((item, idx) => {
+                const candidateLabel = String(item.candidate || item.label || item.id || labelChars[idx] || "").trim().toUpperCase();
+                const scoreVal = Math.max(1, Math.min(100, Math.round(Number(item.score || item.point || item.点数) || 50)));
+                const commentVal = (item.comment || item.feedback || item.review || item.講評 || item.reason || item.commentary || "").trim();
+
+                return {
+                    candidate: candidateLabel,
+                    score: scoreVal,
+                    comment: commentVal
+                };
             });
 
-            console.log(`モデル [${modelName}] での採点が正常に完了しました！`);
+            // ★公平性対策3: 同点補正の偏りを排除（同点時はランダムにシャッフルしてから1点差を分散）
+            evaluations = shuffle(evaluations);
+            let usedScores = new Set();
+            evaluations.forEach(item => {
+                while (usedScores.has(item.score)) {
+                    item.score = Math.max(1, item.score - 1);
+                }
+                usedScores.add(item.score);
+            });
 
-            // ★改良: 連番インデックス照合 ＆ 並び順フォールバック（絶対に取りこぼさない）
-            return submissions.map((s, idx) => {
-                const expectedIndex = idx + 1;
-                // 1. index番号でマッチング
-                let evalItem = evaluations.find(e => Number(e.index) === expectedIndex);
-                // 2. 万一indexが抜けていた場合は、配列の順番（idx番目）を採用
-                if (!evalItem && evaluations[idx]) {
-                    evalItem = evaluations[idx];
+            console.log(`モデル [${modelName}] でのブラインド採点が正常に完了しました！`);
+
+            // 元のプレイヤー情報にマッピング
+            return blindList.map(blind => {
+                let evalItem = evaluations.find(e => e.candidate === blind.label);
+                if (!evalItem) {
+                    evalItem = evaluations[labelChars.indexOf(blind.label)] || evaluations[0];
                 }
 
                 const score = evalItem ? evalItem.score : (60 + Math.floor(Math.random() * 35));
                 const comment = (evalItem && evalItem.comment) ? evalItem.comment : "お題に対する独特のアプローチが光るセンスある回答でした！";
 
                 return {
-                    playerId: s.playerId,
-                    name: s.name,
-                    answer: s.answer,
+                    playerId: blind.playerId,
+                    name: blind.name,
+                    answer: blind.answer,
                     score: score,
                     comment: comment
                 };
@@ -216,21 +257,22 @@ ${submissions.map((s, idx) => `[番号: ${idx + 1}] 回答者: ${s.name} | 回�
         }
     }
 
-    console.log("【自動切り替え】高品質スマートフォールバック（100〜130文字講評）で採点します。");
+    console.log("【自動切り替え】高品質スマートフォールバック（公平ランダム採点）を実行します。");
     return fallbackEvaluation(submissions);
 }
 
 // ==========================================
-// 高品質スマートフォールバック採点
+// 高品質スマートフォールバック採点（完全ランダム・公平）
 // ==========================================
 function fallbackEvaluation(submissions) {
     const count = submissions.length;
+    // 重複のないランダムスコアを生成し、シャッフルして割り当てる（P1優遇の完全排除）
     const scores = [];
     while (scores.length < count) {
         const s = Math.floor(Math.random() * 41) + 60; // 60〜100点
         if (!scores.includes(s)) scores.push(s);
     }
-    scores.sort((a, b) => b - a);
+    const randomizedScores = shuffle(scores);
 
     const commentBank = [
         "お題の真面目なトーンに対して、あまりにも日常的で情けないシチュエーションをぶつける落差が見事でした！誰もが一度は経験したことのある絶妙な共感ポイントを突いており、会場の爆笑をかっさらった文句なしの一本です。",
@@ -249,9 +291,9 @@ function fallbackEvaluation(submissions) {
         playerId: sub.playerId,
         name: sub.name,
         answer: sub.answer,
-        score: scores[index],
+        score: randomizedScores[index],
         comment: shuffledComments[index % shuffledComments.length]
-    }));
+    })).sort((a, b) => b.score - a.score);
 }
 
 // ==========================================
