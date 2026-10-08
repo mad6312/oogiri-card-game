@@ -15,6 +15,8 @@
         <header class="app-header">
             <div class="logo">大喜利カードバトル</div>
             <div class="header-right">
+                <!-- 現在のゲームモード表示バッジ -->
+                <span id="header-mode-badge" class="badge badge-mode">スタンダード</span>
                 <button id="btn-open-settings" class="btn-secondary">⚙️ 名前変更</button>
             </div>
         </header>
@@ -24,6 +26,15 @@
             <div class="lobby-card">
                 <h1>ロビー待機中</h1>
                 <p class="lobby-desc">回答カードを駆使してAIを唸らせろ！ 一本（★）を3つ先取した人の勝利！</p>
+
+                <!-- モード切替エリア（ホストのみ操作可能） -->
+                <div id="host-mode-control" class="mode-control-box" style="display: none;">
+                    <span class="control-label">🎮 ゲームモード設定（ホストのみ）:</span>
+                    <div class="mode-toggle-group">
+                        <button id="btn-mode-standard" class="btn-mode-toggle active">スタンダード</button>
+                        <button id="btn-mode-custom" class="btn-mode-toggle">自由回答</button>
+                    </div>
+                </div>
 
                 <div class="lobby-stats">
                     <div class="stat-box">
@@ -45,7 +56,39 @@
             </div>
         </section>
 
-        <!-- 2. 対戦メイン画面（盤面レイアウト） -->
+        <!-- 2. 【自由回答モード専用】初期手札作成フェーズ画面 -->
+        <section id="creation-screen" class="screen">
+            <div class="creation-container">
+                <div class="creation-header">
+                    <h2>オリジナル回答カード作成</h2>
+                    <p>あなたの武器となる回答カードを7枚作成してください（最大25文字）</p>
+
+                    <!-- 全員の作成準備状況（済ランプリアルタイム一覧） -->
+                    <div class="creation-ready-status">
+                        <span class="status-title">全員の作成状況:</span>
+                        <div id="creation-lamps-list" class="creation-lamps-list"></div>
+                    </div>
+
+                    <div class="creation-status">
+                        <span id="creation-count-label">作成済み: 0 / 7枚</span>
+                        <div id="creation-self-done-lamp" class="done-lamp">済</div>
+                    </div>
+                </div>
+
+                <!-- 作成中の手札スロット（7枠） -->
+                <div id="creation-slots-container" class="creation-slots-container">
+                    <!-- JSで7枠を動的生成 -->
+                </div>
+
+                <!-- カード入力・編集エリア -->
+                <div class="creation-input-bar">
+                    <input type="text" id="input-custom-card" maxlength="25" placeholder="回答テキストを入力（例: 毎朝の全校朝礼でポエム朗読）">
+                    <button id="btn-custom-action" class="btn-primary" disabled>作成</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 3. 対戦メイン画面（盤面レイアウト） -->
         <section id="game-screen" class="screen">
             <!-- 画面上部〜左右：対戦相手エリア（可変レイアウト） -->
             <div id="opponents-container" class="opponents-container">
@@ -58,7 +101,7 @@
                     <span class="topic-tag">本日のお題</span>
                     <div id="current-topic-text" class="topic-body">お題を読み込み中...</div>
                 </div>
-                <!-- 審査中ローディング表示（モデル名なしのシンプル表示） -->
+                <!-- 審査中ローディング表示 -->
                 <div id="scoring-indicator" class="scoring-indicator" style="display: none;">
                     <div class="spinner"></div>
                     <p>AIが厳正に審査中...</p>
@@ -99,7 +142,7 @@
             </div>
         </section>
 
-        <!-- 3. ラウンドリザルト画面（3カラムGrid ＋ 10人スクロール対応） -->
+        <!-- 4. ラウンドリザルト画面（3カラムGrid ＋ 自由回答時手札表示） -->
         <section id="result-screen" class="screen">
             <div class="result-modal-box">
                 <div class="result-header">
@@ -125,13 +168,24 @@
                     </div>
                 </div>
 
+                <!-- 自由回答モード限定：手札再編集エリア（※最終勝利ラウンドでは非表示） -->
+                <div id="result-custom-hand-area" class="result-custom-hand-area" style="display: none;">
+                    <div class="rewrite-notice">
+                        <span>✏️ <strong>自由回答モード:</strong> 手札をクリックして1枚だけ書き換え可能（任意）</span>
+                        <span id="rewrite-status-badge" class="badge badge-gray">未変更</span>
+                    </div>
+                    <div id="result-hand-cards" class="hand-cards-container">
+                        <!-- 手札カードがJSで生成され、クリックで書き換えモーダル起動 -->
+                    </div>
+                </div>
+
                 <div class="result-actions">
                     <button id="btn-next-round" class="btn-primary">次へ（準備完了）</button>
                 </div>
             </div>
         </section>
 
-        <!-- 4. 最終対戦結果画面（優勝者スポットライト演出） -->
+        <!-- 5. 最終対戦結果画面（優勝者スポットライト演出） -->
         <section id="gameover-screen" class="screen">
             <div class="gameover-box">
                 <div class="spotlight"></div>
@@ -174,6 +228,20 @@
                 <p id="modal-card-comment" class="comment-text"></p>
                 <div class="modal-actions">
                     <button id="btn-close-explanation" class="btn-primary">閉じる</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- モーダル：【自由回答限定】リザルト時カード書き換えモーダル -->
+        <div id="modal-rewrite" class="modal">
+            <div class="modal-content">
+                <h3>カードの書き換え（再編集）</h3>
+                <p style="font-size:0.85rem; color:#9ea7b8; margin-bottom:12px;">このラウンドで書き換えられるのは1枚のみです。</p>
+                <div class="card-quote" id="modal-rewrite-old">旧カード</div>
+                <input type="text" id="input-rewrite-card" maxlength="25" placeholder="新しい回答テキスト（最大25文字）">
+                <div class="modal-actions">
+                    <button id="btn-confirm-rewrite" class="btn-primary">更新する</button>
+                    <button id="btn-close-rewrite" class="btn-secondary">キャンセル</button>
                 </div>
             </div>
         </div>

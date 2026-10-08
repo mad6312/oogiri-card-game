@@ -43,6 +43,18 @@ body {
     letter-spacing: 0.5px;
 }
 
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.badge-mode {
+    background: #3949ab;
+    color: #ffffff;
+    border: 1px solid #5c6bc0;
+}
+
 /* ==========================================
    ボタン共通スタイル
    ========================================== */
@@ -64,6 +76,14 @@ button {
 .btn-primary:hover:not(:disabled) {
     background-color: #ffa726;
     transform: translateY(-1px);
+}
+
+.btn-primary:disabled {
+    background-color: #2b3040 !important;
+    color: #636b83 !important;
+    cursor: not-allowed !important;
+    transform: none !important;
+    box-shadow: none !important;
 }
 
 .btn-secondary {
@@ -122,7 +142,45 @@ button {
 .lobby-desc {
     color: #9ea7b8;
     font-size: 0.9rem;
-    margin: 10px 0 24px;
+    margin: 10px 0 20px;
+}
+
+.mode-control-box {
+    background: #141724;
+    border: 1px solid #2d3345;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 20px;
+    text-align: left;
+}
+
+.control-label {
+    display: block;
+    font-size: 0.85rem;
+    color: #ff9800;
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.mode-toggle-group {
+    display: flex;
+    gap: 8px;
+}
+
+.btn-mode-toggle {
+    flex: 1;
+    padding: 8px 12px;
+    font-size: 0.9rem;
+    background: #252a3d;
+    color: #8c93a4;
+    border: 1px solid #3b4259;
+}
+
+.btn-mode-toggle.active {
+    background: #ff9800;
+    color: #12141c;
+    border-color: #ffa726;
+    box-shadow: 0 2px 8px rgba(255, 152, 0, 0.4);
 }
 
 .lobby-stats {
@@ -198,7 +256,159 @@ button {
 }
 
 /* ==========================================
-   2. 対戦盤面レイアウト（可変2〜10名対応）
+   2. 【自由回答モード】初期手札作成画面
+   ========================================== */
+#creation-screen {
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+    background: radial-gradient(circle at center, #1c2236 0%, #0d0f17 100%);
+}
+
+.creation-container {
+    background: #1a1e2c;
+    border: 1px solid #2f364d;
+    border-radius: 14px;
+    padding: 24px 28px;
+    width: 100%;
+    max-width: 920px;
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.creation-header h2 {
+    font-size: 1.35rem;
+    color: #ff9800;
+    margin-bottom: 4px;
+}
+
+.creation-header p {
+    font-size: 0.88rem;
+    color: #9ea7b8;
+}
+
+/* 全員の作成準備状況ランプ一覧 */
+.creation-ready-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #141724;
+    padding: 6px 14px;
+    border-radius: 6px;
+    margin-top: 10px;
+    overflow-x: auto;
+}
+
+.creation-lamps-list {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.creation-lamp-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+    color: #cfd6e6;
+}
+
+.creation-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+    padding: 8px 14px;
+    background: #141724;
+    border-radius: 8px;
+    font-weight: bold;
+}
+
+/* 7枠のスロットコンテナ */
+.creation-slots-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(115px, 1fr));
+    gap: 10px;
+    margin: 4px 0;
+}
+
+.creation-slot {
+    height: 110px;
+    background: #151824;
+    border: 1.5px dashed #3b4259;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    text-align: center;
+    font-size: 0.85rem;
+    color: #636b83;
+    cursor: pointer;
+    transition: all 0.2s;
+    user-select: none;
+    position: relative;
+}
+
+.creation-slot.filled {
+    background: #252b3d;
+    border: 1.5px solid #4a5475;
+    color: #e2e6f0;
+}
+
+.creation-slot.filled:hover {
+    border-color: #ff9800;
+    transform: translateY(-4px);
+}
+
+.creation-slot.editing {
+    border: 2px solid #00e676;
+    background: #1f3328;
+    color: #ffffff;
+    box-shadow: 0 0 14px rgba(0, 230, 118, 0.4);
+    transform: translateY(-6px);
+}
+
+.slot-number {
+    position: absolute;
+    top: 4px;
+    left: 6px;
+    font-size: 0.75rem;
+    color: #8c93a4;
+}
+
+/* 入力バー */
+.creation-input-bar {
+    display: flex;
+    gap: 10px;
+}
+
+.creation-input-bar input {
+    flex: 1;
+    padding: 12px 14px;
+    border-radius: 6px;
+    border: 1px solid #3b4259;
+    background: #12141c;
+    color: #ffffff;
+    font-size: 1rem;
+}
+
+.creation-input-bar input:focus {
+    outline: none;
+    border-color: #ff9800;
+}
+
+.creation-input-bar input:disabled {
+    background: #181b24;
+    color: #636b83;
+    cursor: not-allowed;
+}
+
+/* ==========================================
+   3. 対戦盤面レイアウト（可変2〜10名対応）
    ========================================== */
 #game-screen {
     flex-direction: column;
@@ -207,7 +417,6 @@ button {
     background: radial-gradient(circle at center, #1b2033 0%, #0f1118 100%);
 }
 
-/* 対戦相手コンテナ */
 .opponents-container {
     display: flex;
     flex-wrap: wrap;
@@ -243,7 +452,6 @@ button {
     letter-spacing: 2px;
 }
 
-/* 「済」ランプ */
 .done-lamp {
     width: 30px;
     height: 30px;
@@ -267,7 +475,6 @@ button {
     transform: scale(1.1);
 }
 
-/* 中央お題エリア */
 .table-center {
     display: flex;
     flex-direction: column;
@@ -332,7 +539,6 @@ button {
     }
 }
 
-/* 自陣とお題の間の提出カード配置エリア */
 .submitted-card-area {
     display: flex;
     flex-direction: column;
@@ -381,7 +587,6 @@ button {
     }
 }
 
-/* 自陣・手札エリア */
 .self-container {
     background: #181b26;
     border-top: 1px solid #2d3345;
@@ -458,7 +663,6 @@ button {
     color: #8c93a4;
 }
 
-/* 手札レイアウト */
 .hand-cards-container {
     display: flex;
     gap: 10px;
@@ -502,7 +706,7 @@ button {
 }
 
 /* ==========================================
-   3. ラウンドリザルト画面（3カラムGrid & スクロール）
+   4. ラウンドリザルト画面（3カラムGrid & 自由回答手札）
    ========================================== */
 #result-screen {
     background: rgba(10, 12, 18, 0.88);
@@ -518,23 +722,23 @@ button {
     border-radius: 12px;
     width: 100%;
     max-width: 900px;
-    max-height: 90vh;
+    max-height: 92vh;
     display: flex;
     flex-direction: column;
-    padding: 24px;
+    padding: 20px 24px;
     box-shadow: 0 15px 40px rgba(0, 0, 0, 0.7);
 }
 
 .result-header h2 {
-    font-size: 1.4rem;
+    font-size: 1.35rem;
     color: #ff9800;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
 }
 
 .result-topic {
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     color: #9ea7b8;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
 }
 
 .result-ready-status {
@@ -542,14 +746,14 @@ button {
     align-items: center;
     gap: 12px;
     background: #141620;
-    padding: 8px 14px;
+    padding: 6px 12px;
     border-radius: 6px;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
     overflow-x: auto;
 }
 
 .status-title {
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     color: #8c93a4;
     white-space: nowrap;
 }
@@ -570,7 +774,7 @@ button {
 .result-table-container {
     flex: 1;
     overflow-y: auto;
-    max-height: 55vh;
+    max-height: 40vh;
     border: 1px solid #282e42;
     border-radius: 8px;
     background: #13151f;
@@ -579,10 +783,10 @@ button {
 .result-grid-header {
     display: grid;
     grid-template-columns: 2fr 1fr 3fr;
-    padding: 10px 14px;
+    padding: 8px 14px;
     background: #1e2333;
     font-weight: bold;
-    font-size: 0.85rem;
+    font-size: 0.82rem;
     color: #9ea7b8;
     position: sticky;
     top: 0;
@@ -592,7 +796,7 @@ button {
 .result-row {
     display: grid;
     grid-template-columns: 2fr 1fr 3fr;
-    padding: 12px 14px;
+    padding: 10px 14px;
     align-items: center;
     border-bottom: 1px solid #23283a;
     transition: background 0.15s;
@@ -644,17 +848,16 @@ button {
     background: #2c344a;
 }
 
-/* 1位専用講評バナー（100〜130文字に合わせて行間・余白を最適化） */
 .top-comment-banner {
     grid-column: 1 / -1;
     background: linear-gradient(135deg, #2b1f10, #1f1811);
     border-left: 4px solid #ff9800;
-    padding: 12px 16px;
-    margin: 6px 14px 12px;
+    padding: 10px 14px;
+    margin: 6px 14px 10px;
     border-radius: 6px;
-    font-size: 0.88rem;
+    font-size: 0.85rem;
     color: #ffcc80;
-    line-height: 1.6;
+    line-height: 1.55;
     letter-spacing: 0.3px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
@@ -682,14 +885,29 @@ button {
     }
 }
 
+.result-custom-hand-area {
+    margin-top: 10px;
+    border-top: 1px solid #2d3345;
+    padding-top: 10px;
+}
+
+.rewrite-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    color: #cfd6e6;
+    margin-bottom: 6px;
+}
+
 .result-actions {
-    margin-top: 16px;
+    margin-top: 12px;
     display: flex;
     justify-content: flex-end;
 }
 
 /* ==========================================
-   4. 最終結果画面（スポットライト演出）
+   5. 最終結果画面
    ========================================== */
 #gameover-screen {
     justify-content: center;
@@ -774,7 +992,7 @@ button {
 }
 
 /* ==========================================
-   モーダル共通（長文講評に合わせて読みやすさを向上）
+   モーダル共通
    ========================================== */
 .modal {
     display: none;
@@ -833,7 +1051,6 @@ button {
     font-weight: 600;
 }
 
-/* 長文講評（100〜130文字）のテキストスタイル */
 .comment-text {
     font-size: 0.93rem;
     line-height: 1.65;

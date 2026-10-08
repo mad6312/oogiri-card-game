@@ -10,20 +10,38 @@ let selectedCard = null;        // 手札でタップ選択中のカード
 let mySubmittedCard = null;     // 確定・提出したカード
 let isViewingGameOver = false;  // 最終結果画面を表示中かどうかのフラグ
 
+// 【自由回答モード用】初期手札作成ローカル状態
+let localCustomCards = [];      // 作成中の7枚の配列
+let editingSlotIndex = -1;      // 現在再編集中のスロットインデックス（-1なら新規作成）
+let rewritingCardIndex = -1;    // リザルト時に書き換え対象の手札インデックス
+
 // DOM要素参照
 const screens = {
     lobby: document.getElementById('lobby-screen'),
+    creation: document.getElementById('creation-screen'),
     game: document.getElementById('game-screen'),
     result: document.getElementById('result-screen'),
     gameover: document.getElementById('gameover-screen')
 };
 
-// ロビーUI
+// ヘッダー & ロビーUI
+const headerModeBadge = document.getElementById('header-mode-badge');
+const hostModeControl = document.getElementById('host-mode-control');
+const btnModeStandard = document.getElementById('btn-mode-standard');
+const btnModeCustom = document.getElementById('btn-mode-custom');
 const lobbyEnteredCount = document.getElementById('lobby-entered-count');
 const lobbyStatusBadge = document.getElementById('lobby-status-badge');
 const btnToggleEntry = document.getElementById('btn-toggle-entry');
 const btnStartGame = document.getElementById('btn-start-game');
 const lobbyUserList = document.getElementById('lobby-user-list');
+
+// 初期手札作成UI
+const creationSlotsContainer = document.getElementById('creation-slots-container');
+const inputCustomCard = document.getElementById('input-custom-card');
+const btnCustomAction = document.getElementById('btn-custom-action');
+const creationCountLabel = document.getElementById('creation-count-label');
+const creationSelfDoneLamp = document.getElementById('creation-self-done-lamp');
+const creationLampsList = document.getElementById('creation-lamps-list'); // 全員の作成済ランプ一覧
 
 // 盤面UI
 const opponentsContainer = document.getElementById('opponents-container');
@@ -44,6 +62,9 @@ const resultTopicSummary = document.getElementById('result-topic-summary');
 const resultLampsList = document.getElementById('result-lamps-list');
 const resultGridBody = document.getElementById('result-grid-body');
 const btnNextRound = document.getElementById('btn-next-round');
+const resultCustomHandArea = document.getElementById('result-custom-hand-area');
+const resultHandCards = document.getElementById('result-hand-cards');
+const rewriteStatusBadge = document.getElementById('rewrite-status-badge');
 
 // 最終結果UI
 const winnerName = document.getElementById('winner-name');
@@ -63,6 +84,12 @@ const modalCardTitle = document.getElementById('modal-card-title');
 const modalCardQuote = document.getElementById('modal-card-quote');
 const modalCardComment = document.getElementById('modal-card-comment');
 const btnCloseExplanation = document.getElementById('btn-close-explanation');
+
+const modalRewrite = document.getElementById('modal-rewrite');
+const modalRewriteOld = document.getElementById('modal-rewrite-old');
+const inputRewriteCard = document.getElementById('input-rewrite-card');
+const btnConfirmRewrite = document.getElementById('btn-confirm-rewrite');
+const btnCloseRewrite = document.getElementById('btn-close-rewrite');
 
 // ==========================================
 // ユーティリティ関数
@@ -99,7 +126,8 @@ socket.on('state_update', (state) => {
     const isHost = me ? me.isHost : false;
     const isEntered = me ? me.isEntered : false;
 
-    // 新ラウンド開始時に選択中・提出中カードをリセット
+    headerModeBadge.textContent = state.gameMode === 'custom' ? '自由回答' : 'スタンダード';
+
     if (state.phase === 'answering' && previousPhase !== 'answering') {
         selectedCard = null;
         mySubmittedCard = null;
@@ -110,7 +138,7 @@ socket.on('state_update', (state) => {
         }
     }
 
-    // 1. 最終対戦結果画面（確定星数・同順位の描画）
+    // 1. 最終対戦結果画面
     if (state.phase === 'game_over') {
         isViewingGameOver = true;
         switchScreen('gameover');
@@ -120,12 +148,10 @@ socket.on('state_update', (state) => {
         }
 
         finalRankingsList.innerHTML = '';
-        // サーバー側で確定保存された finalRankings を使用
         const rankings = state.finalRankings || [];
 
         let currentRank = 1;
         rankings.forEach((p, idx) => {
-            // 直前のプレイヤーより星数が少なければ順位を繰り下げ（同星数は同順位）
             if (idx > 0 && p.stars < rankings[idx - 1].stars) {
                 currentRank = idx + 1;
             }
@@ -139,15 +165,27 @@ socket.on('state_update', (state) => {
         return;
     }
 
-    // 自分がまだ最終結果画面を見ている間は、他人の操作によるロビー遷移をブロック
     if (isViewingGameOver) {
         return;
     }
 
-    // 2. ロビー画面の更新
+    // 2. ロビー画面
     if (state.phase === 'lobby') {
         switchScreen('lobby');
         lobbyEnteredCount.textContent = `${state.enteredCount} / 10名`;
+
+        if (isHost) {
+            hostModeControl.style.display = 'block';
+            if (state.gameMode === 'custom') {
+                btnModeCustom.classList.add('active');
+                btnModeStandard.classList.remove('active');
+            } else {
+                btnModeStandard.classList.add('active');
+                btnModeCustom.classList.remove('active');
+            }
+        } else {
+            hostModeControl.style.display = 'none';
+        }
 
         if (isEntered) {
             lobbyStatusBadge.textContent = '参加中... 他のプレイヤーを待っています';
@@ -178,7 +216,45 @@ socket.on('state_update', (state) => {
         });
     }
 
-    // 3. 対戦中（回答選択中・AI審査中）
+    // 3. 【自由回答モード】初期手札作成画面
+    else if (state.phase === 'custom_hand_creation') {
+        switchScreen('creation');
+
+        if (previousPhase !== 'custom_hand_creation') {
+            localCustomCards = [];
+            editingSlotIndex = -1;
+            inputCustomCard.disabled = false;
+            inputCustomCard.value = '';
+            btnCustomAction.disabled = true;
+            btnCustomAction.textContent = '作成';
+            creationSelfDoneLamp.classList.remove('active');
+        }
+
+        // ★改善1: 全参加者の作成完了「済」ランプをリアルタイム表示
+        creationLampsList.innerHTML = '';
+        const enteredPlayers = state.players.filter(p => p.isEntered);
+        enteredPlayers.forEach(p => {
+            const lampItem = document.createElement('div');
+            lampItem.className = 'creation-lamp-item';
+            lampItem.innerHTML = `
+        <span>${escapeHtml(p.name)}</span>
+        <div class="done-lamp ${p.isCustomHandReady ? 'active' : ''}">済</div>
+      `;
+            creationLampsList.appendChild(lampItem);
+        });
+
+        // ★改善2: 自身が完了済みならボタンを完全にグレーアウト（disabled）化
+        if (me && me.isCustomHandReady) {
+            creationSelfDoneLamp.classList.add('active');
+            inputCustomCard.disabled = true;
+            btnCustomAction.disabled = true;
+            btnCustomAction.textContent = '完了済み（待機中）';
+        }
+
+        renderCreationSlots();
+    }
+
+    // 4. 対戦中（回答フェーズ・審査中）
     else if (state.phase === 'answering' || state.phase === 'scoring') {
         switchScreen('game');
         currentTopicText.textContent = state.currentTopic || 'お題準備中';
@@ -210,7 +286,6 @@ socket.on('state_update', (state) => {
             }
         }
 
-        // 対戦相手の描画
         opponentsContainer.innerHTML = '';
         const opponents = state.players.filter(p => p.isEntered && p.id !== currentSocketId);
 
@@ -230,7 +305,7 @@ socket.on('state_update', (state) => {
         renderHandCards();
     }
 
-    // 4. ラウンドリザルト画面
+    // 5. ラウンドリザルト画面
     else if (state.phase === 'round_result') {
         switchScreen('result');
 
@@ -265,6 +340,112 @@ socket.on('state_update', (state) => {
         }
 
         renderRoundResults(state.roundResults);
+
+        // ★改善4: 最終勝者が決まったラウンド（誰かの星が3つに到達）では書き換えUIを非表示にする
+        const hasGameWinner = state.players.some(p => p.isEntered && p.stars >= 3);
+
+        if (state.gameMode === 'custom' && me && !hasGameWinner) {
+            resultCustomHandArea.style.display = 'block';
+            if (me.hasRewrittenThisRound) {
+                rewriteStatusBadge.textContent = '変更済み（今ラウンド終了）';
+                rewriteStatusBadge.className = 'badge badge-green';
+            } else {
+                rewriteStatusBadge.textContent = '1枚変更可能';
+                rewriteStatusBadge.className = 'badge badge-gray';
+            }
+            renderResultHandCards(me.hasRewrittenThisRound);
+        } else {
+            // スタンダードモード、または最終勝者決定ラウンドでは非表示
+            resultCustomHandArea.style.display = 'none';
+        }
+    }
+});
+
+// ==========================================
+// 【自由回答モード】初期手札作成ロジック
+// ==========================================
+function renderCreationSlots() {
+    creationSlotsContainer.innerHTML = '';
+    creationCountLabel.textContent = `作成済み: ${localCustomCards.length} / 7枚`;
+
+    for (let i = 0; i < 7; i++) {
+        const slot = document.createElement('div');
+        slot.className = 'creation-slot';
+
+        const cardText = localCustomCards[i];
+        if (cardText) {
+            slot.classList.add('filled');
+            if (editingSlotIndex === i) {
+                slot.classList.add('editing');
+            }
+            slot.innerHTML = `<span class="slot-number">#${i + 1}</span>${escapeHtml(cardText)}`;
+
+            slot.addEventListener('click', () => {
+                if (creationSelfDoneLamp.classList.contains('active')) return;
+                editingSlotIndex = i;
+                inputCustomCard.value = cardText;
+                inputCustomCard.focus();
+                updateCreationButtonState();
+                renderCreationSlots();
+            });
+        } else {
+            slot.innerHTML = `<span class="slot-number">#${i + 1}</span>（未作成）`;
+        }
+
+        creationSlotsContainer.appendChild(slot);
+    }
+
+    updateCreationButtonState();
+}
+
+function updateCreationButtonState() {
+    if (creationSelfDoneLamp.classList.contains('active')) return;
+
+    const text = inputCustomCard.value.trim();
+
+    if (editingSlotIndex !== -1) {
+        btnCustomAction.textContent = '修正';
+        btnCustomAction.disabled = text.length === 0;
+    } else if (localCustomCards.length === 7) {
+        btnCustomAction.textContent = '完了';
+        btnCustomAction.disabled = false;
+    } else {
+        btnCustomAction.textContent = '作成';
+        btnCustomAction.disabled = text.length === 0;
+    }
+}
+
+inputCustomCard.addEventListener('input', () => {
+    updateCreationButtonState();
+});
+
+btnCustomAction.addEventListener('click', () => {
+    const text = inputCustomCard.value.trim();
+
+    if (editingSlotIndex !== -1) {
+        if (text.length > 0) {
+            localCustomCards[editingSlotIndex] = text;
+            editingSlotIndex = -1;
+            inputCustomCard.value = '';
+            renderCreationSlots();
+        }
+        return;
+    }
+
+    // ★改善2: 7枚完了ボタン押下時、即座にボタンをグレーアウト（disabled）化
+    if (localCustomCards.length === 7 && btnCustomAction.textContent === '完了') {
+        socket.emit('submit_custom_hand', localCustomCards);
+        creationSelfDoneLamp.classList.add('active');
+        inputCustomCard.disabled = true;
+        btnCustomAction.disabled = true;
+        btnCustomAction.textContent = '完了済み（待機中）';
+        return;
+    }
+
+    if (text.length > 0 && localCustomCards.length < 7) {
+        localCustomCards.push(text);
+        inputCustomCard.value = '';
+        renderCreationSlots();
     }
 });
 
@@ -301,6 +482,60 @@ function renderHandCards() {
         handCardsContainer.appendChild(cardEl);
     });
 }
+
+function renderResultHandCards(hasRewritten) {
+    resultHandCards.innerHTML = '';
+    currentHand.forEach((cardText, idx) => {
+        const cardEl = document.createElement('div');
+        cardEl.className = 'answer-card';
+        cardEl.textContent = cardText;
+        cardEl.title = hasRewritten ? '今ラウンドは変更済みです' : 'クリックしてこのカードを書き換える';
+
+        if (!hasRewritten) {
+            cardEl.addEventListener('click', () => {
+                openRewriteModal(idx, cardText);
+            });
+        } else {
+            cardEl.style.cursor = 'default';
+            cardEl.style.opacity = '0.7';
+        }
+
+        resultHandCards.appendChild(cardEl);
+    });
+}
+
+function openRewriteModal(index, oldText) {
+    rewritingCardIndex = index;
+    modalRewriteOld.textContent = oldText;
+    inputRewriteCard.value = '';
+    modalRewrite.classList.add('active');
+    inputRewriteCard.focus();
+}
+
+// ★改善3: 書き換え時、即座にローカル手札を直接書き換えて0秒で画面に反映
+btnConfirmRewrite.addEventListener('click', () => {
+    const newText = inputRewriteCard.value.trim();
+    if (newText.length > 0 && rewritingCardIndex !== -1) {
+        // サーバーへ送信
+        socket.emit('rewrite_custom_card', {
+            index: rewritingCardIndex,
+            newText: newText
+        });
+
+        // 即座に画面上の手札を直接書き換え
+        currentHand[rewritingCardIndex] = newText;
+        renderResultHandCards(true);
+
+        rewriteStatusBadge.textContent = '変更済み（今ラウンド終了）';
+        rewriteStatusBadge.className = 'badge badge-green';
+
+        modalRewrite.classList.remove('active');
+    }
+});
+
+btnCloseRewrite.addEventListener('click', () => {
+    modalRewrite.classList.remove('active');
+});
 
 // 回答するボタン押下
 btnSubmitAnswer.addEventListener('click', () => {
@@ -387,6 +622,14 @@ function escapeHtml(str) {
 // ==========================================
 // イベントリスナー設定
 // ==========================================
+btnModeStandard.addEventListener('click', () => {
+    socket.emit('set_game_mode', 'standard');
+});
+
+btnModeCustom.addEventListener('click', () => {
+    socket.emit('set_game_mode', 'custom');
+});
+
 btnToggleEntry.addEventListener('click', () => {
     socket.emit('toggle_entry');
 });
@@ -399,14 +642,12 @@ btnNextRound.addEventListener('click', () => {
     socket.emit('ready_next_round');
 });
 
-// 再戦ボタン：押した本人のみ再戦を決定してロビーへ遷移
 btnRematch.addEventListener('click', () => {
     isViewingGameOver = false;
     socket.emit('rematch');
     switchScreen('lobby');
 });
 
-// 退出するボタン：押した本人のみ退出を決定してロビーへ遷移
 btnLeave.addEventListener('click', () => {
     isViewingGameOver = false;
     socket.emit('leave_game');

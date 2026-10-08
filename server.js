@@ -18,7 +18,6 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-// 最優先モデル: gemini-3.5-flash-lite
 const PREFERRED_GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 
 // 静的ファイルの提供
@@ -28,9 +27,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ゲーム状態の管理
 // ==========================================
 const gameState = {
-    phase: 'lobby',
+    phase: 'lobby', // 'lobby' | 'custom_hand_creation' | 'answering' | 'scoring' | 'round_result' | 'game_over'
+    gameMode: 'standard', // 'standard' | 'custom'
     hostId: null,
-    players: {},
+    players: {}, // socketId => { id, name, isEntered, hand: [], stars: 0, currentAnswer: null, isReadyForNext: false, isCustomHandReady: false, hasRewrittenThisRound: false }
     currentTopic: null,
     topicDeck: [],
     answerDeck: [],
@@ -90,6 +90,8 @@ function broadcastState() {
         handCount: p.hand.length,
         hasAnswered: p.currentAnswer !== null,
         isReadyForNext: p.isReadyForNext,
+        isCustomHandReady: p.isCustomHandReady,
+        hasRewrittenThisRound: p.hasRewrittenThisRound,
         isHost: p.id === gameState.hostId
     }));
 
@@ -97,6 +99,7 @@ function broadcastState() {
 
     io.emit('state_update', {
         phase: gameState.phase,
+        gameMode: gameState.gameMode,
         hostId: gameState.hostId,
         currentTopic: gameState.currentTopic,
         players: playerList,
@@ -119,13 +122,11 @@ async function evaluateAnswersWithGemini(topic, submissions) {
         return fallbackEvaluation(submissions);
     }
 
-    // 順序バイアス排除のためのランダムシャッフル
     const shuffledSubmissions = shuffle(submissions.map((s, originalIdx) => ({
         ...s,
         originalIdx
     })));
 
-    // プレイヤー名を伏せたブラインド審査用リスト
     const labelChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const blindList = shuffledSubmissions.map((item, idx) => ({
         label: labelChars[idx] || `${idx + 1}`,
@@ -215,7 +216,6 @@ ${blindList.map(b => `[候補 ${b.label}] 回答:「${b.answer}」`).join('\n')}
                 };
             });
 
-            // 同点時のランダム分散処理
             evaluations = shuffle(evaluations);
             let usedScores = new Set();
             evaluations.forEach(item => {
@@ -259,7 +259,6 @@ ${blindList.map(b => `[候補 ${b.label}] 回答:「${b.answer}」`).join('\n')}
     return fallbackEvaluation(submissions);
 }
 
-// 高品質スマートフォールバック採点
 function fallbackEvaluation(submissions) {
     const count = submissions.length;
     const scores = [];
@@ -292,7 +291,7 @@ function fallbackEvaluation(submissions) {
 }
 
 // ==========================================
-// ラウンド進行関数（手札全体回収・シャッフル再配布実装）
+// ラウンド進行関数（モード分岐対応）
 // ==========================================
 function startNewRound() {
     const entered = Object.values(gameState.players).filter(p => p.isEntered);
@@ -305,32 +304,39 @@ function startNewRound() {
     gameState.phase = 'answering';
     gameState.currentTopic = drawTopic();
 
-    // ★仕様変更: 毎ラウンド開始時、全プレイヤーの手札を回収・集約してランダム再配布
-    let pooledCards = [];
-    entered.forEach(p => {
-        pooledCards.push(...p.hand);
-        p.hand = []; // 一旦回収
-    });
-
-    // カードプールをランダムシャッフル
-    pooledCards = shuffle(pooledCards);
-
-    // 全員に均等に1枚ずつ再配布
-    while (pooledCards.length >= entered.length) {
+    if (gameState.gameMode === 'standard') {
+        // スタンダードモード: 全体シャッフル ＆ 補充
+        let pooledCards = [];
         entered.forEach(p => {
-            if (pooledCards.length > 0) {
-                p.hand.push(pooledCards.pop());
+            pooledCards.push(...p.hand);
+            p.hand = [];
+        });
+
+        pooledCards = shuffle(pooledCards);
+
+        while (pooledCards.length >= entered.length) {
+            entered.forEach(p => {
+                if (pooledCards.length > 0) {
+                    p.hand.push(pooledCards.pop());
+                }
+            });
+        }
+
+        entered.forEach(p => {
+            while (p.hand.length < 7) {
+                p.hand.push(drawAnswerCard());
             }
         });
+    } else {
+        // 自由回答モード: シャッフルなし、自作手札をそのまま維持
+        // （使用したカードも消費されないため常に7枚維持）
     }
 
-    // 手札が7枚に満たない分を山札から補充（全重複なしルール維持・7枚維持）
+    // プレイヤー状態のリセット
     entered.forEach(p => {
-        while (p.hand.length < 7) {
-            p.hand.push(drawAnswerCard());
-        }
         p.currentAnswer = null;
         p.isReadyForNext = false;
+        p.hasRewrittenThisRound = false; // 書き換え権利を復活
     });
 
     gameState.roundResults = [];
@@ -387,7 +393,9 @@ io.on('connection', (socket) => {
         hand: [],
         stars: 0,
         currentAnswer: null,
-        isReadyForNext: false
+        isReadyForNext: false,
+        isCustomHandReady: false,
+        hasRewrittenThisRound: false
     };
 
     if (!gameState.hostId) {
@@ -398,6 +406,15 @@ io.on('connection', (socket) => {
     if (gameState.topicDeck.length === 0) resetTopicDeck();
 
     broadcastState();
+
+    // モード切替（ホスト専用）
+    socket.on('set_game_mode', (mode) => {
+        if (socket.id !== gameState.hostId) return;
+        if (mode === 'standard' || mode === 'custom') {
+            gameState.gameMode = mode;
+            broadcastState();
+        }
+    });
 
     socket.on('update_name', (newName) => {
         if (gameState.players[socket.id] && typeof newName === 'string') {
@@ -417,6 +434,7 @@ io.on('connection', (socket) => {
         broadcastState();
     });
 
+    // ゲーム開始
     socket.on('start_game', () => {
         if (socket.id !== gameState.hostId) return;
         const entered = Object.values(gameState.players).filter(p => p.isEntered);
@@ -427,18 +445,64 @@ io.on('connection', (socket) => {
         gameState.winner = null;
         gameState.finalRankings = [];
 
-        // 初期手札7枚の生成
         entered.forEach(p => {
             p.stars = 0;
             p.hand = [];
-            for (let i = 0; i < 7; i++) {
-                p.hand.push(drawAnswerCard());
-            }
+            p.isCustomHandReady = false;
+            p.hasRewrittenThisRound = false;
         });
 
-        startNewRound();
+        if (gameState.gameMode === 'custom') {
+            // 自由回答モード: 初期手札作成フェーズへ
+            gameState.phase = 'custom_hand_creation';
+            broadcastState();
+        } else {
+            // スタンダードモード: 初期手札7枚配布して即座に第1ラウンド開始
+            entered.forEach(p => {
+                for (let i = 0; i < 7; i++) {
+                    p.hand.push(drawAnswerCard());
+                }
+            });
+            startNewRound();
+        }
     });
 
+    // 自由回答モード: 初期手札7枚の作成完了
+    socket.on('submit_custom_hand', (cards) => {
+        const player = gameState.players[socket.id];
+        if (!player || gameState.phase !== 'custom_hand_creation' || !player.isEntered) return;
+        if (!Array.isArray(cards) || cards.length !== 7) return;
+
+        // 25文字以内に制限
+        player.hand = cards.map(c => String(c).trim().slice(0, 25));
+        player.isCustomHandReady = true;
+        broadcastState();
+
+        // 全員が作成完了したかチェック
+        const entered = Object.values(gameState.players).filter(p => p.isEntered);
+        const allReady = entered.every(p => p.isCustomHandReady);
+
+        if (allReady) {
+            startNewRound();
+        }
+    });
+
+    // 自由回答モード: ラウンドリザルト時の手札1枚書き換え
+    socket.on('rewrite_custom_card', ({ index, newText }) => {
+        const player = gameState.players[socket.id];
+        if (!player || gameState.phase !== 'round_result' || !player.isEntered) return;
+        if (gameState.gameMode !== 'custom') return;
+        if (player.hasRewrittenThisRound) return; // 1ラウンド1回のみ
+
+        const trimmed = String(newText || "").trim().slice(0, 25);
+        if (trimmed.length > 0 && index >= 0 && index < player.hand.length) {
+            player.hand[index] = trimmed;
+            player.hasRewrittenThisRound = true;
+            broadcastState();
+        }
+    });
+
+    // 回答選択
     socket.on('submit_answer', (answerText) => {
         const player = gameState.players[socket.id];
         if (!player || gameState.phase !== 'answering' || !player.isEntered) return;
@@ -446,7 +510,12 @@ io.on('connection', (socket) => {
         const cardIndex = player.hand.indexOf(answerText);
         if (cardIndex !== -1) {
             player.currentAnswer = answerText;
-            player.hand.splice(cardIndex, 1);
+
+            // ★仕様: スタンダードモードのみ手札から破棄。自由回答モードでは手札に残る（消費されない）
+            if (gameState.gameMode === 'standard') {
+                player.hand.splice(cardIndex, 1);
+            }
+
             broadcastState();
 
             const entered = Object.values(gameState.players).filter(p => p.isEntered);
@@ -474,7 +543,6 @@ io.on('connection', (socket) => {
                 gameState.phase = 'game_over';
                 gameState.winner = victor;
 
-                // 全参加者の最終獲得星数を確定保存
                 gameState.finalRankings = entered.map(p => ({
                     id: p.id,
                     name: p.name,
@@ -486,6 +554,8 @@ io.on('connection', (socket) => {
                     p.hand = [];
                     p.currentAnswer = null;
                     p.isReadyForNext = false;
+                    p.isCustomHandReady = false;
+                    p.hasRewrittenThisRound = false;
                 });
 
                 broadcastState();
@@ -503,6 +573,8 @@ io.on('connection', (socket) => {
         player.hand = [];
         player.currentAnswer = null;
         player.isReadyForNext = false;
+        player.isCustomHandReady = false;
+        player.hasRewrittenThisRound = false;
         player.isEntered = true;
 
         gameState.phase = 'lobby';
@@ -518,6 +590,8 @@ io.on('connection', (socket) => {
         player.hand = [];
         player.currentAnswer = null;
         player.isReadyForNext = false;
+        player.isCustomHandReady = false;
+        player.hasRewrittenThisRound = false;
         player.isEntered = false;
 
         gameState.phase = 'lobby';
