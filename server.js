@@ -119,13 +119,13 @@ async function evaluateAnswersWithGemini(topic, submissions) {
         return fallbackEvaluation(submissions);
     }
 
-    // ★公平性対策1: 回答の提出順序を完全にランダムシャッフルして順序バイアスを排除
+    // 順序バイアス排除のためのランダムシャッフル
     const shuffledSubmissions = shuffle(submissions.map((s, originalIdx) => ({
         ...s,
         originalIdx
     })));
 
-    // ★公平性対策2: プレイヤー名・IDを一切排除した「記号（候補A, B, C...）」でブラインド化
+    // プレイヤー名を伏せたブラインド審査用リスト
     const labelChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const blindList = shuffledSubmissions.map((item, idx) => ({
         label: labelChars[idx] || `${idx + 1}`,
@@ -180,7 +180,7 @@ ${blindList.map(b => `[候補 ${b.label}] 回答:「${b.answer}」`).join('\n')}
                 model: modelName,
                 generationConfig: {
                     responseMimeType: "application/json",
-                    temperature: 0.75 // 決定論的バイアスを崩し、多様で公正な審査を促進
+                    temperature: 0.75
                 }
             });
 
@@ -203,7 +203,6 @@ ${blindList.map(b => `[候補 ${b.label}] 回答:「${b.answer}」`).join('\n')}
                 throw new Error("評価リストが抽出できませんでした");
             }
 
-            // 評価結果を正規化
             let evaluations = rawList.map((item, idx) => {
                 const candidateLabel = String(item.candidate || item.label || item.id || labelChars[idx] || "").trim().toUpperCase();
                 const scoreVal = Math.max(1, Math.min(100, Math.round(Number(item.score || item.point || item.点数) || 50)));
@@ -216,7 +215,7 @@ ${blindList.map(b => `[候補 ${b.label}] 回答:「${b.answer}」`).join('\n')}
                 };
             });
 
-            // ★公平性対策3: 同点補正の偏りを排除（同点時はランダムにシャッフルしてから1点差を分散）
+            // 同点時のランダム分散処理
             evaluations = shuffle(evaluations);
             let usedScores = new Set();
             evaluations.forEach(item => {
@@ -228,7 +227,6 @@ ${blindList.map(b => `[候補 ${b.label}] 回答:「${b.answer}」`).join('\n')}
 
             console.log(`モデル [${modelName}] でのブラインド採点が正常に完了しました！`);
 
-            // 元のプレイヤー情報にマッピング
             return blindList.map(blind => {
                 let evalItem = evaluations.find(e => e.candidate === blind.label);
                 if (!evalItem) {
@@ -261,15 +259,12 @@ ${blindList.map(b => `[候補 ${b.label}] 回答:「${b.answer}」`).join('\n')}
     return fallbackEvaluation(submissions);
 }
 
-// ==========================================
-// 高品質スマートフォールバック採点（完全ランダム・公平）
-// ==========================================
+// 高品質スマートフォールバック採点
 function fallbackEvaluation(submissions) {
     const count = submissions.length;
-    // 重複のないランダムスコアを生成し、シャッフルして割り当てる（P1優遇の完全排除）
     const scores = [];
     while (scores.length < count) {
-        const s = Math.floor(Math.random() * 41) + 60; // 60〜100点
+        const s = Math.floor(Math.random() * 41) + 60;
         if (!scores.includes(s)) scores.push(s);
     }
     const randomizedScores = shuffle(scores);
@@ -297,7 +292,7 @@ function fallbackEvaluation(submissions) {
 }
 
 // ==========================================
-// ラウンド進行関数
+// ラウンド進行関数（手札全体回収・シャッフル再配布実装）
 // ==========================================
 function startNewRound() {
     const entered = Object.values(gameState.players).filter(p => p.isEntered);
@@ -310,6 +305,26 @@ function startNewRound() {
     gameState.phase = 'answering';
     gameState.currentTopic = drawTopic();
 
+    // ★仕様変更: 毎ラウンド開始時、全プレイヤーの手札を回収・集約してランダム再配布
+    let pooledCards = [];
+    entered.forEach(p => {
+        pooledCards.push(...p.hand);
+        p.hand = []; // 一旦回収
+    });
+
+    // カードプールをランダムシャッフル
+    pooledCards = shuffle(pooledCards);
+
+    // 全員に均等に1枚ずつ再配布
+    while (pooledCards.length >= entered.length) {
+        entered.forEach(p => {
+            if (pooledCards.length > 0) {
+                p.hand.push(pooledCards.pop());
+            }
+        });
+    }
+
+    // 手札が7枚に満たない分を山札から補充（全重複なしルール維持・7枚維持）
     entered.forEach(p => {
         while (p.hand.length < 7) {
             p.hand.push(drawAnswerCard());
@@ -412,6 +427,7 @@ io.on('connection', (socket) => {
         gameState.winner = null;
         gameState.finalRankings = [];
 
+        // 初期手札7枚の生成
         entered.forEach(p => {
             p.stars = 0;
             p.hand = [];
@@ -458,6 +474,7 @@ io.on('connection', (socket) => {
                 gameState.phase = 'game_over';
                 gameState.winner = victor;
 
+                // 全参加者の最終獲得星数を確定保存
                 gameState.finalRankings = entered.map(p => ({
                     id: p.id,
                     name: p.name,
