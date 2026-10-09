@@ -41,7 +41,7 @@ const inputCustomCard = document.getElementById('input-custom-card');
 const btnCustomAction = document.getElementById('btn-custom-action');
 const creationCountLabel = document.getElementById('creation-count-label');
 const creationSelfDoneLamp = document.getElementById('creation-self-done-lamp');
-const creationLampsList = document.getElementById('creation-lamps-list'); // 全員の作成済ランプ一覧
+const creationLampsList = document.getElementById('creation-lamps-list');
 
 // 盤面UI
 const opponentsContainer = document.getElementById('opponents-container');
@@ -62,7 +62,7 @@ const resultTopicSummary = document.getElementById('result-topic-summary');
 const resultLampsList = document.getElementById('result-lamps-list');
 const resultGridBody = document.getElementById('result-grid-body');
 const btnNextRound = document.getElementById('btn-next-round');
-const resultCustomHandArea = document.getElementById('result-custom-hand-area');
+const resultCustomDock = document.getElementById('result-custom-dock');
 const resultHandCards = document.getElementById('result-hand-cards');
 const rewriteStatusBadge = document.getElementById('rewrite-status-badge');
 
@@ -105,6 +105,24 @@ function renderStars(count) {
     const filled = '★'.repeat(Math.min(count, 3));
     const empty = '☆'.repeat(Math.max(0, 3 - count));
     return filled + empty;
+}
+
+// リザルト画面のスクロール位置を最上部へリセットする関数
+function resetResultScrollPositions() {
+    if (screens.result) {
+        screens.result.scrollTop = 0;
+    }
+    const tableContainer = document.querySelector('.result-table-container');
+    if (tableContainer) {
+        tableContainer.scrollTop = 0;
+    }
+    const modalBox = document.querySelector('.result-modal-box');
+    if (modalBox) {
+        modalBox.scrollTop = 0;
+    }
+    if (resultHandCards) {
+        resultHandCards.scrollLeft = 0;
+    }
 }
 
 // ==========================================
@@ -230,7 +248,6 @@ socket.on('state_update', (state) => {
             creationSelfDoneLamp.classList.remove('active');
         }
 
-        // ★改善1: 全参加者の作成完了「済」ランプをリアルタイム表示
         creationLampsList.innerHTML = '';
         const enteredPlayers = state.players.filter(p => p.isEntered);
         enteredPlayers.forEach(p => {
@@ -243,7 +260,6 @@ socket.on('state_update', (state) => {
             creationLampsList.appendChild(lampItem);
         });
 
-        // ★改善2: 自身が完了済みならボタンを完全にグレーアウト（disabled）化
         if (me && me.isCustomHandReady) {
             creationSelfDoneLamp.classList.add('active');
             inputCustomCard.disabled = true;
@@ -307,6 +323,14 @@ socket.on('state_update', (state) => {
 
     // 5. ラウンドリザルト画面
     else if (state.phase === 'round_result') {
+        const isFirstTimeInResult = previousPhase !== 'round_result';
+
+        // ★改善1: 「前フェーズからリザルト画面へ遷移した瞬間」のみスクロールを最上部へリセット
+        // （「次へ」押下時など同一フェーズ中の同期ではリセットしないため、跳ね上がりが発生しない）
+        if (isFirstTimeInResult) {
+            resetResultScrollPositions();
+        }
+
         switchScreen('result');
 
         mySubmittedCard = null;
@@ -341,11 +365,15 @@ socket.on('state_update', (state) => {
 
         renderRoundResults(state.roundResults);
 
-        // ★改善4: 最終勝者が決まったラウンド（誰かの星が3つに到達）では書き換えUIを非表示にする
+        // ★改善2: モードに応じたレイアウト切り替えクラスの付与
         const hasGameWinner = state.players.some(p => p.isEntered && p.stars >= 3);
+        const isCustomActive = state.gameMode === 'custom' && me && !hasGameWinner;
 
-        if (state.gameMode === 'custom' && me && !hasGameWinner) {
-            resultCustomHandArea.style.display = 'block';
+        if (isCustomActive) {
+            screens.result.classList.add('is-custom-mode');
+            screens.result.classList.remove('is-standard-mode');
+            resultCustomDock.style.display = 'block';
+
             if (me.hasRewrittenThisRound) {
                 rewriteStatusBadge.textContent = '変更済み（今ラウンド終了）';
                 rewriteStatusBadge.className = 'badge badge-green';
@@ -355,8 +383,15 @@ socket.on('state_update', (state) => {
             }
             renderResultHandCards(me.hasRewrittenThisRound);
         } else {
-            // スタンダードモード、または最終勝者決定ラウンドでは非表示
-            resultCustomHandArea.style.display = 'none';
+            // スタンダードモード（または最終勝者決定時）: 縦方向中央配置＆自動伸長モード
+            screens.result.classList.add('is-standard-mode');
+            screens.result.classList.remove('is-custom-mode');
+            resultCustomDock.style.display = 'none';
+        }
+
+        // 初回表示時のみスクロール位置を最上部へ確定
+        if (isFirstTimeInResult) {
+            resetResultScrollPositions();
         }
     }
 });
@@ -432,7 +467,6 @@ btnCustomAction.addEventListener('click', () => {
         return;
     }
 
-    // ★改善2: 7枚完了ボタン押下時、即座にボタンをグレーアウト（disabled）化
     if (localCustomCards.length === 7 && btnCustomAction.textContent === '完了') {
         socket.emit('submit_custom_hand', localCustomCards);
         creationSelfDoneLamp.classList.add('active');
@@ -512,17 +546,14 @@ function openRewriteModal(index, oldText) {
     inputRewriteCard.focus();
 }
 
-// ★改善3: 書き換え時、即座にローカル手札を直接書き換えて0秒で画面に反映
 btnConfirmRewrite.addEventListener('click', () => {
     const newText = inputRewriteCard.value.trim();
     if (newText.length > 0 && rewritingCardIndex !== -1) {
-        // サーバーへ送信
         socket.emit('rewrite_custom_card', {
             index: rewritingCardIndex,
             newText: newText
         });
 
-        // 即座に画面上の手札を直接書き換え
         currentHand[rewritingCardIndex] = newText;
         renderResultHandCards(true);
 

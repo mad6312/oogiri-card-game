@@ -289,7 +289,6 @@ button {
     color: #9ea7b8;
 }
 
-/* 全員の作成準備状況ランプ一覧 */
 .creation-ready-status {
     display: flex;
     align-items: center;
@@ -326,7 +325,6 @@ button {
     font-weight: bold;
 }
 
-/* 7枠のスロットコンテナ */
 .creation-slots-container {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(115px, 1fr));
@@ -380,7 +378,6 @@ button {
     color: #8c93a4;
 }
 
-/* 入力バー */
 .creation-input-bar {
     display: flex;
     gap: 10px;
@@ -706,27 +703,61 @@ button {
 }
 
 /* ==========================================
-   4. ラウンドリザルト画面（3カラムGrid & 自由回答手札）
+   4. ラウンドリザルト画面（コンポーネント分離構造 ＆ 自動縦伸長）
    ========================================== */
 #result-screen {
-    background: rgba(10, 12, 18, 0.88);
-    backdrop-filter: blur(6px);
-    justify-content: center;
+    background: rgba(10, 12, 18, 0.92);
+    backdrop-filter: blur(8px);
+    flex-direction: column;
     align-items: center;
-    padding: 20px;
+    padding: 14px 20px 10px;
+    overflow-y: auto;
 }
 
+/* ★改善2: スタンダードモード時の上下中央寄せ & 縦方向自動伸長 */
+#result-screen.is-standard-mode {
+    justify-content: center;
+    /* 画面全体の上下中央寄せ */
+}
+
+#result-screen.is-standard-mode .result-modal-box {
+    height: 82vh;
+    /* 画面高さいっぱいに美しく自動伸長 */
+    max-height: 85vh;
+}
+
+#result-screen.is-standard-mode .result-table-container {
+    max-height: none;
+    flex: 1;
+    /* 順位リストが縦いっぱいにAuto Stretch */
+}
+
+/* 自由回答モード時（下部に手札ドックが存在する場合）のレイアウト */
+#result-screen.is-custom-mode {
+    justify-content: space-between;
+}
+
+#result-screen.is-custom-mode .result-modal-box {
+    max-height: 56vh;
+}
+
+#result-screen.is-custom-mode .result-table-container {
+    max-height: 34vh;
+}
+
+/* 【コンポーネントA】リザルト本体モーダル */
 .result-modal-box {
     background: #1a1d29;
     border: 1px solid #333a52;
     border-radius: 12px;
     width: 100%;
     max-width: 900px;
-    max-height: 92vh;
     display: flex;
     flex-direction: column;
-    padding: 20px 24px;
+    padding: 16px 22px;
     box-shadow: 0 15px 40px rgba(0, 0, 0, 0.7);
+    margin: 0 auto;
+    transition: all 0.3s ease;
 }
 
 .result-header h2 {
@@ -738,7 +769,7 @@ button {
 .result-topic {
     font-size: 0.88rem;
     color: #9ea7b8;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 }
 
 .result-ready-status {
@@ -748,7 +779,7 @@ button {
     background: #141620;
     padding: 6px 12px;
     border-radius: 6px;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
     overflow-x: auto;
 }
 
@@ -772,9 +803,7 @@ button {
 }
 
 .result-table-container {
-    flex: 1;
     overflow-y: auto;
-    max-height: 40vh;
     border: 1px solid #282e42;
     border-radius: 8px;
     background: #13151f;
@@ -885,25 +914,50 @@ button {
     }
 }
 
-.result-custom-hand-area {
+.result-actions {
     margin-top: 10px;
-    border-top: 1px solid #2d3345;
-    padding-top: 10px;
+    display: flex;
+    justify-content: flex-end;
 }
 
-.rewrite-notice {
+/* 【コンポーネントB】自由回答モード専用：画面下部の独立手札トレイ（ドック） */
+.result-custom-dock {
+    width: 100%;
+    max-width: 1200px;
+    background: #181b26;
+    border: 1px solid #2d3345;
+    border-radius: 12px;
+    padding: 10px 16px;
+    margin-top: 10px;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.dock-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 0.82rem;
-    color: #cfd6e6;
     margin-bottom: 6px;
+    padding: 0 2px;
 }
 
-.result-actions {
-    margin-top: 12px;
+.dock-title-group {
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+}
+
+.dock-badge {
+    background: #3949ab;
+    color: #ffffff;
+    font-size: 0.75rem;
+    font-weight: 800;
+    padding: 3px 10px;
+    border-radius: 4px;
+}
+
+.dock-desc {
+    font-size: 0.85rem;
+    color: #cfd6e6;
 }
 
 /* ==========================================
